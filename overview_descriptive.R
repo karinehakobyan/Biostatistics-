@@ -27,40 +27,16 @@ linelist_Y_death <- import("Y_death.csv")
 
 # Overview dataset => plausibility-check
 ## show
-head
+head(linelist_ari)
 ## general
-glimpse(linelist_raw)
+glimpse(linelist_ari)
 ## structure
-str(linelist_raw)
+str(linelist_ari)
 ## Variable names
-names(linelist_raw)
+names(linelist_ari)
 
 # descriptive statistics
 ## summary => plausibility check
-summary(linelist_raw)
+summary(linelist_ari)
 ## skimr
-skimr::skim(linelist_raw)
-## additional counts
-linelist_raw %>%
-  count(sex)
-
-linelist_raw %>%
-  count(smoking_status)
-
-linelist_raw %>%
-  count(complication)
-
-
-# Visualisation
-
-## ggplot
-### age
-ggplot(linelist_raw, aes(x = age)) +
-  geom_histogram(bins = 30, fill = "steelblue") +
-  theme_minimal() +
-  labs(title = "Distribution of Age")
-### bmi
-ggplot(linelist_raw, aes(x = bmi)) +
-  geom_histogram(bins = 30, fill = "darkgreen") +
-  theme_minimal() +
-  labs(title = "Distribution of BMI")
+skimr::skim(linelist_ari)
