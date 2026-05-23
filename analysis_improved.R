@@ -1,5 +1,4 @@
-# =============================================================================
-# ANALYSIS: SOCIOECONOMIC DETERMINANTS OF LIFE EXPECTANCY
+# ANALYSIS: SOCIOECONOMIC DETERMINANTS OF LIFE EXPECTANCY --------
 # Research Question: What is the influence of socioeconomic factors and
 #                    education on life expectancy?
 # Sections:
@@ -8,14 +7,12 @@
 #   3. Correlation Analysis
 #   4. Group Comparisons
 #   5. Temporal Analysis
-#   6. Multiple Linear Regression
-#   7. Interaction / Moderation Analysis
-# =============================================================================
+#   6. Scatter plots with subgroups
+#   7. Multiple Linear Regression
+#   8. Interaction / Moderation Analysis
+# -----------------------------------------------------------------------------
 
-
-# =============================================================================
-# 1. SETUP & DATA PREPARATION
-# =============================================================================
+# 1. SETUP & DATA PREPARATION ---------
 
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
@@ -132,9 +129,8 @@ df <- df %>%
   )
 
 
-# =============================================================================
-# 2. DESCRIPTIVE STATISTICS
-# =============================================================================
+
+# 2. DESCRIPTIVE STATISTICS ----------
 
 socio_edu_vars <- c("life_exp", "schooling", "income_comp", "gdp",
                     "log_gdp", "tot_expend", "adult_mort",
@@ -463,6 +459,7 @@ p_corr_bar <- tbl3 %>%
 print(p_corr_bar)
 
 
+<<<<<<< HEAD
 
 # ── Pairplot / scatterplot matrix ----------------------------------------
 
@@ -480,6 +477,9 @@ GGally::ggpairs(
 # =============================================================================
 # 4. GROUP COMPARISONS
 # =============================================================================
+=======
+# 4. GROUP COMPARISONS ------------
+>>>>>>> 0d68e05 (better subheads)
 
 # ── Table 4: Developed vs Developing binary comparison -----------------------
 # Primary: Mann-Whitney (non-normal); Welch t and Cohen's d also reported
@@ -666,9 +666,9 @@ rm_model <- aov(life_exp ~ year_f + Error(country / year_f), data = rm_data)
 print(summary(rm_model))
 
 
-# =============================================================================
-# 5. TEMPORAL ANALYSIS
-# =============================================================================
+
+# 5. TEMPORAL ANALYSIS ---------
+
 
 yearly_summary <- df %>%
   group_by(year, status) %>%
@@ -753,13 +753,13 @@ p_yearly_sig <- ggplot(yearly_hypothesis_results, aes(year, Gap)) +
 print(p_yearly_sig)
 
 
-# =============================================================================
-# 6. SCATTERPLOTS WITH YEAR SUBGROUP
-# =============================================================================
+
+# 6. SCATTERPLOTS WITH YEAR SUBGROUP --------
+
 # Each predictor (Schooling, Income Composition, log-GDP) is shown in three
 # formats: (A) colour gradient by year, (B) faceted by year bracket,
 # (C) animated GIF by year.
-# =============================================================================
+
 
 scatter_data <- df %>%
   mutate(year_f = factor(year))
@@ -832,9 +832,8 @@ for (spec in scatter_spec) {
 # fig_counter is now 15 after the loop (12, 13, 14 used)
 
 
-# =============================================================================
-# 7. MULTIPLE LINEAR REGRESSION
-# =============================================================================
+
+# 7. MULTIPLE LINEAR REGRESSION ---------
 
 # ── Model building (hierarchical) --------------------------------------------
 m0 <- lm(life_exp ~ 1, data = df)
@@ -1085,9 +1084,8 @@ partial_results <- tibble(
 partial_results
 
 
-# =============================================================================
-# 8. INTERACTION / MODERATION ANALYSIS
-# =============================================================================
+
+# 8. INTERACTION / MODERATION ANALYSIS ---------
 
 # ── 8.1  Schooling x Status --------------------------------------------------
 m_add1 <- lm(life_exp ~ schooling + status + income_comp + adult_mort + hiv_aids, data = df)
