@@ -44,7 +44,9 @@ pacman::p_load(
   purrr,
   GGally,
   ppcor,
-  ggrepel
+  ggrepel,
+  pROC,
+  caret
 )
 select <- dplyr::select
 filter <- dplyr::filter
@@ -1262,7 +1264,254 @@ print(tbl11_gt)
 # 9. Logistic regression
 # =============================================================================
 
+# ── 9.1 Create binary outcome -------------------------------------------------
+
+df_logit <- df %>%
+  mutate(
+    high_life_exp = ifelse(life_exp > 70, 1, 0),
+    high_life_exp = factor(high_life_exp, levels = c(0, 1),
+                           labels = c("≤70 years", ">70 years"))
+  )
+
+table(df_logit$high_life_exp)
+
+# ── 9.2 Fit logistic regression model ----------------------------------------
+
+log_model <- glm(
+  high_life_exp ~ schooling + income_comp + log_gdp +
+    adult_mort + hiv_aids + tot_expend + status,
+  data = df_logit,
+  family = binomial(link = "logit")
+)
+
+summary(log_model)
+
+# ── 9.3 Odds ratios with 95% CI ----------------------------------------------
+
+log_results <- broom::tidy(
+  log_model,
+  exponentiate = TRUE,
+  conf.int = TRUE
+) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    term = dplyr::recode(term,
+                         schooling        = "Schooling (years)",
+                         income_comp      = "Income Composition Index",
+                         log_gdp          = "log(GDP per capita)",
+                         adult_mort       = "Adult Mortality",
+                         hiv_aids         = "HIV/AIDS",
+                         tot_expend       = "Health Expenditure",
+                         statusDeveloping = "Status: Developing"
+    ),
+    sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      TRUE            ~ ""
+    )
+  ) %>%
+  transmute(
+    Predictor = term,
+    OR = round(estimate, 3),
+    CI_low = round(conf.low, 3),
+    CI_high = round(conf.high, 3),
+    p_value = round(p.value, 4),
+    sig
+  )
+
+log_results
+
+log_results_gt <- log_results %>%
+  gt() %>%
+  tab_header(
+    title = "Logistic Regression: Predictors of High Life Expectancy",
+    subtitle = "Outcome: Life expectancy >70 years"
+  ) %>%
+  cols_label(
+    Predictor = "Predictor",
+    OR = "Odds Ratio",
+    CI_low = "95% CI low",
+    CI_high = "95% CI high",
+    p_value = "p",
+    sig = ""
+  ) %>%
+  tab_footnote("OR > 1 indicates higher odds of life expectancy >70 years. OR < 1 indicates lower odds.")
+
+print(log_results_gt)
+
+# ── 9.4 Predicted probabilities ----------------------------------------------
+
+df_logit <- df_logit %>%
+  mutate(
+    predicted_prob = predict(log_model, type = "response")
+  )
+
+summary(df_logit$predicted_prob)
+
+# ── 9.5 Example patient/country profiles -------------------------------------
+
+profiles <- tibble(
+  schooling = c(6, 10, 14),
+  income_comp = c(0.45, 0.65, 0.85),
+  log_gdp = c(
+    quantile(df$log_gdp, 0.25),
+    median(df$log_gdp),
+    quantile(df$log_gdp, 0.75)
+  ),
+  adult_mort = c(300, 180, 80),
+  hiv_aids = c(5, 1, 0.1),
+  tot_expend = c(4, 6, 8),
+  status = factor(
+    c("Developing", "Developing", "Developed"),
+    levels = levels(df$status)
+  )
+)
+
+profiles$predicted_probability <- predict(
+  log_model,
+  newdata = profiles,
+  type = "response"
+)
+
+profiles <- profiles %>%
+  mutate(
+    predicted_probability_percent = round(predicted_probability * 100, 1)
+  )
+
+profiles
+
+# ── 9.6 Forest plot of odds ratios -------------------------------------------
+
+p_log_or <- log_results %>%
+  ggplot(aes(x = reorder(Predictor, OR), y = OR)) +
+  geom_point(size = 3, colour = "#2166AC") +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0.2) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = "grey50") +
+  coord_flip() +
+  scale_y_log10() +
+  labs(
+    title = "Odds Ratios for High Life Expectancy",
+    subtitle = "Outcome: Life expectancy >70 years",
+    x = NULL,
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_pub
+
+print(p_log_or)
+
+# ── 9.7 Model evaluation: ROC and AUC -----------------------------------------
+
+pacman::p_load(pROC)
+
+roc_obj <- pROC::roc(
+  response = df_logit$high_life_exp,
+  predictor = df_logit$predicted_prob,
+  levels = c("≤70 years", ">70 years")
+)
+
+auc_value <- pROC::auc(roc_obj)
+auc_value
+
+plot(
+  roc_obj,
+  main = paste("ROC Curve: Logistic Regression, AUC =", round(auc_value, 3)),
+  col = "#2166AC",
+  lwd = 2
+)
+abline(a = 0, b = 1, lty = 2, col = "grey50")
+
+# ── Table 12: Logistic regression results ------------------------------------
+
+tbl12 <- broom::tidy(
+  log_model,
+  exponentiate = TRUE,
+  conf.int = TRUE
+) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    Predictor = dplyr::recode(term,
+                              schooling        = "Schooling (years)",
+                              income_comp      = "Income Composition Index",
+                              log_gdp          = "log(GDP per capita)",
+                              adult_mort       = "Adult Mortality",
+                              hiv_aids         = "HIV/AIDS Deaths",
+                              tot_expend       = "Health Expenditure (% GDP)",
+                              statusDeveloping = "Status: Developing"
+    ),
+    
+    OR        = round(estimate, 3),
+    CI        = paste0("(", round(conf.low, 3),
+                       " ; ",
+                       round(conf.high, 3), ")"),
+    
+    p_value   = round(p.value, 4),
+    
+    sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      TRUE            ~ ""
+    )
+  ) %>%
+  select(Predictor, OR, CI, p_value, sig)
+
+tbl12_gt <- tbl12 %>%
+  gt() %>%
+  
+  tab_header(
+    title = "Table 12. Logistic Regression Predicting High Life Expectancy",
+    subtitle = "Outcome: Life expectancy >70 years"
+  ) %>%
+  
+  cols_label(
+    Predictor = "Predictor",
+    OR        = "Odds Ratio",
+    CI        = "95% CI",
+    p_value   = "p-value",
+    sig       = ""
+  ) %>%
+  
+  fmt_number(
+    columns = c(OR, p_value),
+    decimals = 3
+  ) %>%
+  
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      rows = p_value < 0.05
+    )
+  ) %>%
+  
+  tab_footnote(
+    footnote = "OR > 1 indicates higher odds of life expectancy >70 years. OR < 1 indicates lower odds. *** p<0.001, ** p<0.01, * p<0.05."
+  )
+
+print(tbl12_gt)
 
 
+# VISUALISATIONS FOR LOGISTIC REGRESSION
 
+## 1. Predicted probability by observed outcome -----------------
+
+linelist_raw <- linelist_raw %>%
+  mutate(
+    predicted_prob = predict(model_log, type = "response"),
+    complication_label = factor(
+      complication_binary,
+      levels = c(0, 1),
+      labels = c("No complication", "Complication")
+    )
+  )
+
+ggplot(linelist_raw, aes(x = complication_label, y = predicted_prob)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.6) +
+  geom_jitter(width = 0.15, alpha = 0.5) +
+  labs(
+    title = "Predicted Risk by Observed Complication Status",
+    x = "Observed outcome",
+    y = "Predicted probability of complication"
+  ) +
+  theme_minimal()
 
