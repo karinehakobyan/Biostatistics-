@@ -598,7 +598,8 @@ dunn_income <- dunn.test(df$life_exp, df$income_cat, method = "bonferroni",
 cat("\n-- Two-way ANOVA: Life Expectancy ~ Status x Schooling Category --\n")
 anova_2way  <- aov(life_exp ~ status * schooling_cat, data = df)
 print(summary(anova_2way))
-eta_2way    <- eta_squared(anova_2way, partial = TRUE)
+eta_2way <- effectsize::eta_squared(anova_2way)
+eta_2way
 cat("\nPartial eta-squared:\n"); print(eta_2way)
 
 emm_2way <- emmeans(anova_2way, pairwise ~ status | schooling_cat,
@@ -1491,27 +1492,98 @@ tbl12_gt <- tbl12 %>%
 print(tbl12_gt)
 
 
-# VISUALISATIONS FOR LOGISTIC REGRESSION
+## VISUALISATIONS FOR LOGISTIC REGRESSION
+# --- Figure 24. Predicted probability of high life expectancy
 
-## 1. Predicted probability by observed outcome -----------------
+pred_grid <- expand.grid(
+  schooling = seq(
+    min(df$schooling, na.rm = TRUE),
+    max(df$schooling, na.rm = TRUE),
+    length.out = 100
+  ),
+  
+  income_comp = median(df$income_comp, na.rm = TRUE),
+  log_gdp     = median(df$log_gdp, na.rm = TRUE),
+  adult_mort  = median(df$adult_mort, na.rm = TRUE),
+  hiv_aids    = median(df$hiv_aids, na.rm = TRUE),
+  tot_expend  = median(df$tot_expend, na.rm = TRUE),
+  
+  status = levels(df$status)
+)
 
-linelist_raw <- linelist_raw %>%
-  mutate(
-    predicted_prob = predict(model_log, type = "response"),
-    complication_label = factor(
-      complication_binary,
-      levels = c(0, 1),
-      labels = c("No complication", "Complication")
-    )
+# Predict probabilities
+pred_grid$predicted_prob <- predict(
+  log_model,
+  newdata = pred_grid,
+  type = "response"
+)
+
+# Visualization
+p_logit_prob <- ggplot(
+  pred_grid,
+  aes(
+    x = schooling,
+    y = predicted_prob,
+    colour = status,
+    fill = status
   )
-
-ggplot(linelist_raw, aes(x = complication_label, y = predicted_prob)) +
-  geom_boxplot(fill = "lightblue", alpha = 0.6) +
-  geom_jitter(width = 0.15, alpha = 0.5) +
-  labs(
-    title = "Predicted Risk by Observed Complication Status",
-    x = "Observed outcome",
-    y = "Predicted probability of complication"
+) +
+  geom_line(linewidth = 1.3) +
+  
+  scale_colour_manual(values = palette_status) +
+  scale_fill_manual(values = palette_status) +
+  
+  scale_y_continuous(
+    labels = scales::percent_format(),
+    limits = c(0, 1)
   ) +
-  theme_minimal()
+  
+  labs(
+    title = "Figure 24. Predicted Probability of High Life Expectancy",
+    subtitle = "Outcome: probability of life expectancy >70 years",
+    x = "Years of Schooling",
+    y = "Predicted Probability",
+    colour = "Development Status",
+    fill = "Development Status"
+  ) +
+  
+  theme_pub
 
+print(p_logit_prob)
+
+
+# Figure 25. ROC curve and AUC for logistic regression
+# Predicted probabilities
+df_logit$predicted_prob <- predict(
+  log_model,
+  type = "response"
+)
+
+# ROC object
+roc_obj <- pROC::roc(
+  response = df_logit$high_life_exp,
+  predictor = df_logit$predicted_prob,
+  levels = c("≤70 years", ">70 years")
+)
+
+# AUC
+auc_value <- pROC::auc(roc_obj)
+auc_value
+
+# ROC plot
+p_roc <- ggroc(roc_obj, linewidth = 1.2, colour = "#2166AC") +
+  geom_abline(
+    intercept = 1,
+    slope = 1,
+    linetype = "dashed",
+    colour = "grey50"
+  ) +
+  labs(
+    title = "Figure 25. ROC Curve for Logistic Regression",
+    subtitle = paste0("Outcome: Life expectancy >70 years | AUC = ", round(auc_value, 3)),
+    x = "Specificity",
+    y = "Sensitivity"
+  ) +
+  theme_pub
+
+print(p_roc)
