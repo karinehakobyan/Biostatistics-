@@ -46,6 +46,10 @@ pacman::p_load(
   ppcor,
   ggrepel
 )
+select <- dplyr::select
+filter <- dplyr::filter
+rename <- dplyr::rename
+mutate <- dplyr::mutate
 
 # ── Global ggplot theme -------------------------------------------------------
 theme_pub <- theme_classic(base_size = 12) +
@@ -418,45 +422,7 @@ p_pearson_spearman <- ggplot(
 
 print(p_pearson_spearman)
 
-# ── 3B.5 Partial correlation: Schooling and Life Expectancy adjusted for GDP ---
 
-partial_schooling_gdp <- ppcor::pcor.test(
-  x = df$schooling,
-  y = df$life_exp,
-  z = df$log_gdp
-)
-
-partial_schooling_gdp
-
-partial_income_gdp <- ppcor::pcor.test(
-  x = df$income_comp,
-  y = df$life_exp,
-  z = df$log_gdp
-)
-
-partial_income_gdp
-
-partial_results <- tibble(
-  Relationship = c(
-    "Schooling vs Life Expectancy adjusted for log(GDP)",
-    "Income Composition vs Life Expectancy adjusted for log(GDP)"
-  ),
-  Partial_r = c(
-    partial_schooling_gdp$estimate,
-    partial_income_gdp$estimate
-  ),
-  p_value = c(
-    partial_schooling_gdp$p.value,
-    partial_income_gdp$p.value
-  )
-) %>%
-  mutate(
-    Partial_r = round(Partial_r, 3),
-    p_value = round(p_value, 4),
-    Significant = ifelse(p_value < 0.05, "Yes", "No")
-  )
-
-partial_results
 
 # ── Figure 4: Pearson correlation heatmap -------------------------------------
 p_corr <- ggcorrplot(pearson_mat,
@@ -494,33 +460,9 @@ p_corr_bar <- tbl3 %>%
   xlim(c(-1.1, 1.1))  
 print(p_corr_bar)
 
-# Figure 6: Key scatterplots with linear and LOESS trends ------------------------
 
-key_corr_pairs <- list(
-  list(x = "schooling",   xlab = "Schooling (years)"),
-  list(x = "income_comp", xlab = "Income Composition Index"),
-  list(x = "log_gdp",     xlab = "log(GDP per capita)"),
-  list(x = "hiv_aids",    xlab = "HIV/AIDS deaths")
-)
 
-for (pair in key_corr_pairs) {
-  
-  p <- ggplot(df, aes(x = .data[[pair$x]], y = life_exp)) +
-    geom_point(alpha = 0.35, colour = "#2166AC") +
-    geom_smooth(method = "lm", se = TRUE, colour = "#D6604D") +
-    geom_smooth(method = "loess", se = FALSE, colour = "black", linetype = "dashed") +
-    labs(
-      title = paste("Life Expectancy vs", pair$xlab),
-      subtitle = "Red = linear trend; dashed black = LOESS trend",
-      x = pair$xlab,
-      y = "Life Expectancy (years)"
-    ) +
-    theme_pub
-  
-  print(p)
-}
-
-# ── 3B.2 Pairplot / scatterplot matrix ----------------------------------------
+# ── Pairplot / scatterplot matrix ----------------------------------------
 
 pairplot_df <- df %>%
   select(life_exp, schooling, income_comp, log_gdp, adult_mort, hiv_aids, bmi) %>%
@@ -1074,6 +1016,70 @@ p_std_coef <- std_coefs %>%
        subtitle = "Beta with 95% CI",
        x = NULL, y = "Standardised beta")
 print(p_std_coef)
+
+# ── 7A. Exploratory model plots: linear vs non-linear trends -------------------
+
+key_model_pairs <- list(
+  list(x = "schooling",   xlab = "Schooling (years)"),
+  list(x = "income_comp", xlab = "Income Composition Index"),
+  list(x = "log_gdp",     xlab = "log(GDP per capita)"),
+  list(x = "hiv_aids",    xlab = "HIV/AIDS deaths")
+)
+
+for (pair in key_model_pairs) {
+  
+  p <- ggplot(df, aes(x = .data[[pair$x]], y = life_exp)) +
+    geom_point(alpha = 0.35, colour = "#2166AC") +
+    geom_smooth(method = "lm", se = TRUE, colour = "#D6604D") +
+    geom_smooth(method = "loess", se = FALSE, colour = "black", linetype = "dashed") +
+    labs(
+      title = paste("Life Expectancy vs", pair$xlab),
+      subtitle = "Red = linear trend; dashed black = LOESS trend",
+      x = pair$xlab,
+      y = "Life Expectancy (years)"
+    ) +
+    theme_pub
+  
+  print(p)
+}
+
+
+
+# ── 7B. Partial correlations: adjusted associations ---------------------------
+
+partial_schooling_gdp <- ppcor::pcor.test(
+  x = df$schooling,
+  y = df$life_exp,
+  z = df$log_gdp
+)
+
+partial_income_gdp <- ppcor::pcor.test(
+  x = df$income_comp,
+  y = df$life_exp,
+  z = df$log_gdp
+)
+
+partial_results <- tibble(
+  Relationship = c(
+    "Schooling vs Life Expectancy adjusted for log(GDP)",
+    "Income Composition vs Life Expectancy adjusted for log(GDP)"
+  ),
+  Partial_r = c(
+    partial_schooling_gdp$estimate,
+    partial_income_gdp$estimate
+  ),
+  p_value = c(
+    partial_schooling_gdp$p.value,
+    partial_income_gdp$p.value
+  )
+) %>%
+  mutate(
+    Partial_r = round(Partial_r, 3),
+    p_value = round(p_value, 4),
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+partial_results
 
 
 # =============================================================================
