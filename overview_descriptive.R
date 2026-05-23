@@ -16,27 +16,27 @@ pacman::p_load(
 )
 
 
-
 # IMPORT 
-linelist_ari <- import("ari.csv")
-linelist_Sc <- import("Sc.csv")
-linelist_Y <- import("Y.csv")
-linelist_Y_death <- import("Y_death.csv")
+linelist_raw <- import("life_expectancy.csv")
 
-
+linelist <- linelist_raw %>%
+## name cleaning
+janitor::clean_names() 
 
 # Overview dataset => plausibility-check
 ## show
-head(linelist_ari)
+head(linelist)
 ## general
-glimpse(linelist_ari)
+glimpse(linelist)
 ## structure
-str(linelist_ari)
+str(linelist)
 ## Variable names
-names(linelist_ari)
+names(linelist)
 
 # descriptive statistics
 ## summary => plausibility check
-summary(linelist_ari)
-## skimr
-skimr::skim(linelist_ari)
+summary(linelist)
+## value cleaning
+skimr::skim(linelist)
+## additional counts
+

@@ -41,7 +41,10 @@ pacman::p_load(
   gganimate,      # animated GIFs
   gifski,         # GIF renderer for gganimate
   transformr,      # smooth transitions in gganimate
-  purrr
+  purrr,
+  GGally,
+  ppcor,
+  ggrepel
 )
 
 # ── Global ggplot theme -------------------------------------------------------
@@ -264,7 +267,7 @@ print(p_bar_status)
 
 
 # =============================================================================
-# 3. CORRELATION ANALYSIS
+# 3. CORRELATION ANALYSIS - Alena
 # =============================================================================
 
 corr_vars <- c("life_exp", "schooling", "income_comp", "log_gdp",
@@ -320,6 +323,141 @@ tbl3_gt <- tbl3 %>%
   tab_footnote("*** p<0.001, ** p<0.01, * p<0.05. Sorted by |r|.")
 print(tbl3_gt)
 
+# ── 3B.3 Pearson correlation coefficients with 95% confidence intervals --------
+
+corr_ci_tbl <- map_dfr(setdiff(names(corr_df), "life_exp"), function(v) {
+  
+  test <- cor.test(corr_df$life_exp, corr_df[[v]], method = "pearson")
+  
+  tibble(
+    Variable = v,
+    r = as.numeric(test$estimate),
+    conf_low = test$conf.int[1],
+    conf_high = test$conf.int[2],
+    p_value = test$p.value
+  )
+}) %>%
+  mutate(
+    Variable = dplyr::recode(Variable,
+                             schooling     = "Schooling",
+                             income_comp   = "Income Comp. Index",
+                             log_gdp       = "log(GDP)",
+                             tot_expend    = "Health Expenditure",
+                             adult_mort    = "Adult Mortality",
+                             infant_deaths = "Infant Deaths",
+                             hiv_aids      = "HIV/AIDS",
+                             bmi           = "BMI",
+                             alcohol       = "Alcohol",
+                             hepatitis_b   = "Hepatitis B",
+                             polio         = "Polio",
+                             diphtheria    = "Diphtheria"
+    ),
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ ""
+    )
+  ) %>%
+  arrange(r)
+
+corr_ci_tbl
+
+p_corr_forest <- ggplot(corr_ci_tbl,
+                        aes(x = r, y = reorder(Variable, r))) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_errorbarh(aes(xmin = conf_low, xmax = conf_high),
+                 height = 0.2, colour = "grey40") +
+  geom_point(aes(colour = r > 0), size = 3) +
+  geom_text(
+    aes(label = paste0(sprintf("%.2f", r), " ", sig)),
+    hjust = ifelse(corr_ci_tbl$r > 0, -0.15, 1.15),
+    size = 3
+  ) +
+  scale_colour_manual(
+    values = c("TRUE" = "#2166AC", "FALSE" = "#D6604D"),
+    guide = "none"
+  ) +
+  xlim(-1.1, 1.1) +
+  labs(
+    title = "Pearson Correlations with Life Expectancy",
+    subtitle = "Points = Pearson r; lines = 95% confidence intervals",
+    x = "Pearson r",
+    y = NULL
+  ) +
+  theme_pub
+
+print(p_corr_forest)
+
+
+# ── 3B.4 Pearson vs Spearman comparison ---------------------------------------
+
+pearson_spearman_comparison <- tbl3 %>%
+  mutate(
+    difference = abs(r_pearson - rho_spearman)
+  ) %>%
+  arrange(desc(difference))
+
+pearson_spearman_comparison
+
+p_pearson_spearman <- ggplot(
+  pearson_spearman_comparison,
+  aes(x = r_pearson, y = rho_spearman, label = Variable)
+) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(size = 3, colour = "#2166AC") +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 20) +
+  coord_equal(xlim = c(-1, 1), ylim = c(-1, 1)) +
+  labs(
+    title = "Pearson vs Spearman Correlations",
+    subtitle = "Large deviations from the dashed line suggest non-linearity or outlier sensitivity",
+    x = "Pearson r",
+    y = "Spearman rho"
+  ) +
+  theme_pub
+
+print(p_pearson_spearman)
+
+# ── 3B.5 Partial correlation: Schooling and Life Expectancy adjusted for GDP ---
+
+partial_schooling_gdp <- ppcor::pcor.test(
+  x = df$schooling,
+  y = df$life_exp,
+  z = df$log_gdp
+)
+
+partial_schooling_gdp
+
+partial_income_gdp <- ppcor::pcor.test(
+  x = df$income_comp,
+  y = df$life_exp,
+  z = df$log_gdp
+)
+
+partial_income_gdp
+
+partial_results <- tibble(
+  Relationship = c(
+    "Schooling vs Life Expectancy adjusted for log(GDP)",
+    "Income Composition vs Life Expectancy adjusted for log(GDP)"
+  ),
+  Partial_r = c(
+    partial_schooling_gdp$estimate,
+    partial_income_gdp$estimate
+  ),
+  p_value = c(
+    partial_schooling_gdp$p.value,
+    partial_income_gdp$p.value
+  )
+) %>%
+  mutate(
+    Partial_r = round(Partial_r, 3),
+    p_value = round(p_value, 4),
+    Significant = ifelse(p_value < 0.05, "Yes", "No")
+  )
+
+partial_results
+
 # ── Figure 4: Pearson correlation heatmap -------------------------------------
 p_corr <- ggcorrplot(pearson_mat,
                      method   = "square", type = "lower",
@@ -355,6 +493,44 @@ p_corr_bar <- tbl3 %>%
   ) +
   xlim(c(-1.1, 1.1))  
 print(p_corr_bar)
+
+# Figure 6: Key scatterplots with linear and LOESS trends ------------------------
+
+key_corr_pairs <- list(
+  list(x = "schooling",   xlab = "Schooling (years)"),
+  list(x = "income_comp", xlab = "Income Composition Index"),
+  list(x = "log_gdp",     xlab = "log(GDP per capita)"),
+  list(x = "hiv_aids",    xlab = "HIV/AIDS deaths")
+)
+
+for (pair in key_corr_pairs) {
+  
+  p <- ggplot(df, aes(x = .data[[pair$x]], y = life_exp)) +
+    geom_point(alpha = 0.35, colour = "#2166AC") +
+    geom_smooth(method = "lm", se = TRUE, colour = "#D6604D") +
+    geom_smooth(method = "loess", se = FALSE, colour = "black", linetype = "dashed") +
+    labs(
+      title = paste("Life Expectancy vs", pair$xlab),
+      subtitle = "Red = linear trend; dashed black = LOESS trend",
+      x = pair$xlab,
+      y = "Life Expectancy (years)"
+    ) +
+    theme_pub
+  
+  print(p)
+}
+
+# ── 3B.2 Pairplot / scatterplot matrix ----------------------------------------
+
+pairplot_df <- df %>%
+  select(life_exp, schooling, income_comp, log_gdp, adult_mort, hiv_aids, bmi) %>%
+  drop_na()
+
+GGally::ggpairs(
+  pairplot_df,
+  title = "Pairplot of Key Predictors and Life Expectancy"
+)
+
 
 
 # =============================================================================
@@ -486,7 +662,7 @@ emm_2way <- emmeans(anova_2way, pairwise ~ status | schooling_cat,
 cat("\nEmmeans pairwise (Status within Schooling):\n")
 print(emm_2way$contrasts)
 
-# ── Figure 6: Boxplot by schooling category -----------------------------------
+# ── Figure 7: Boxplot by schooling category -----------------------------------
 p_box_school <- ggplot(df, aes(schooling_cat, life_exp, fill = schooling_cat)) +
   geom_violin(alpha = 0.3, colour = NA) +
   geom_boxplot(width = 0.28, outlier.shape = 21, outlier.size = 1.2,
@@ -496,7 +672,7 @@ p_box_school <- ggplot(df, aes(schooling_cat, life_exp, fill = schooling_cat)) +
        x = "Schooling Tertile", y = "Life Expectancy (years)")
 print(p_box_school)
 
-# ── Figure 7: Boxplot by income category --------------------------------------
+# ── Figure 8: Boxplot by income category --------------------------------------
 p_box_income <- ggplot(df, aes(income_cat, life_exp, fill = income_cat)) +
   geom_violin(alpha = 0.3, colour = NA) +
   geom_boxplot(width = 0.28, outlier.shape = 21, outlier.size = 1.2,
@@ -506,7 +682,7 @@ p_box_income <- ggplot(df, aes(income_cat, life_exp, fill = income_cat)) +
        x = "Income Tertile", y = "Life Expectancy (years)")
 print(p_box_income)
 
-# ── Figure 8: Two-way interaction plot ----------------------------------------
+# ── Figure 9: Two-way interaction plot ----------------------------------------
 p_twoway <- ggplot(df, aes(schooling_cat, life_exp, fill = status, colour = status)) +
   geom_boxplot(alpha = 0.45, position = position_dodge(0.8),
                outlier.shape = 21, outlier.size = 1.2, outlier.alpha = 0.4) +
@@ -518,7 +694,7 @@ p_twoway <- ggplot(df, aes(schooling_cat, life_exp, fill = status, colour = stat
        fill     = "Status", colour = "Status")
 print(p_twoway)
 
-# ── Figure 9: Mosaic-style stacked bar ----------------------------------------
+# ── Figure 10: Mosaic-style stacked bar ----------------------------------------
 p_mosaic <- df %>%
   count(status, life_exp_cat) %>%
   group_by(status) %>%
@@ -559,7 +735,7 @@ yearly_summary <- df %>%
   ) %>%
   mutate(across(where(is.numeric), ~ round(., 2)))
 
-# ── Figure 10: Life expectancy gap over time ----------------------------------
+# ── Figure 11: Life expectancy gap over time ----------------------------------
 p_yearly_trend <- ggplot(yearly_summary,
                          aes(year, avg_life_exp, colour = status, group = status)) +
   geom_line(linewidth = 1.2) +
@@ -614,7 +790,7 @@ tbl6_gt <- yearly_hypothesis_results %>%
   tab_footnote("Wilcoxon rank-sum test per year. Significant = p < 0.05.")
 print(tbl6_gt)
 
-# ── Figure 11: Gap significance over time -------------------------------------
+# ── Figure 12: Gap significance over time -------------------------------------
 p_yearly_sig <- ggplot(yearly_hypothesis_results, aes(year, Gap)) +
   geom_line(colour = "grey50", linewidth = 0.9) +
   geom_point(aes(colour = Significant, size = Significant)) +
@@ -1074,4 +1250,13 @@ tbl11_gt <- tbl11 %>%
   ) %>%
   tab_footnote("F-test from ANOVA comparison of additive vs interaction model.")
 print(tbl11_gt)
+
+
+# =============================================================================
+# 9. Logistic regression
+# =============================================================================
+
+
+
+
 
