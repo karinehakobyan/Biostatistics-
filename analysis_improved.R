@@ -1587,3 +1587,106 @@ p_roc <- ggroc(roc_obj, linewidth = 1.2, colour = "#2166AC") +
   theme_pub
 
 print(p_roc)
+
+
+# ── Table 13: Confusion matrix -----------------------------------------------
+# ============================================================
+# Confusion Matrix — Logistic Regression
+# Life expectancy >70 years
+# ============================================================
+
+pacman::p_load(caret)
+
+# Predicted probabilities from logistic model
+df_logit$predicted_prob <- predict(
+  log_model,
+  type = "response"
+)
+
+# Classification threshold
+df_logit$predicted_class <- ifelse(
+  df_logit$predicted_prob >= 0.5,
+  "1",
+  "0"
+)
+
+# Convert to factors
+df_logit$predicted_class <- factor(
+  df_logit$predicted_class,
+  levels = c("0", "1")
+)
+
+df_logit$high_le_binary <- ifelse(
+  df_logit$life_exp > 70,
+  "1",
+  "0"
+)
+
+df_logit$high_le_binary <- factor(
+  df_logit$high_le_binary,
+  levels = c("0", "1")
+)
+
+# Confusion matrix
+conf_matrix <- caret::confusionMatrix(
+  df_logit$predicted_class,
+  df_logit$high_le_binary,
+  positive = "1"
+)
+
+conf_matrix
+
+# Accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+accuracy
+
+
+# confusion matrix table
+
+## 2x2 confusion matrix
+conf_table <- table(
+  Observed  = df_logit$high_le_binary,
+  Predicted = df_logit$predicted_class
+)
+
+## Convert to dataframe
+conf_table_df <- as.data.frame.matrix(conf_table)
+
+# Performance metrics
+accuracy    <- round(conf_matrix$overall["Accuracy"], 3)
+sensitivity <- round(conf_matrix$byClass["Sensitivity"], 3)
+specificity <- round(conf_matrix$byClass["Specificity"], 3)
+
+## Pretty table
+conf_table_gt <- conf_table_df %>%
+  tibble::rownames_to_column("Observed") %>%
+  gt() %>%
+  
+  tab_header(
+    title = "2x2 Confusion Matrix",
+    subtitle = "Observed vs Predicted High Life Expectancy"
+  ) %>%
+  
+  cols_label(
+    Observed = "Observed",
+    `0` = "Predicted 0",
+    `1` = "Predicted 1"
+  ) %>%
+  
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      rows = c(1, 2),
+      columns = c(`0`, `1`)
+    )
+  ) %>%
+  
+  tab_source_note(
+    source_note = paste0(
+      "Accuracy = ", accuracy,
+      " | Sensitivity = ", sensitivity,
+      " | Specificity = ", specificity
+    )
+  )
+
+print(conf_table_gt)
