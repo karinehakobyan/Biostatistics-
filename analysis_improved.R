@@ -1285,6 +1285,31 @@ log_model <- glm(
   family = binomial(link = "logit")
 )
 
+# ── 9.x Model fit: Likelihood Ratio Test and Pseudo R² ------------------------
+
+pacman::p_load(pscl)
+
+# Null model: intercept only
+log_null <- glm(
+  high_life_exp ~ 1,
+  data = df_logit,
+  family = binomial(link = "logit")
+)
+
+# Likelihood Ratio Test: full model vs null model
+lrt_log <- anova(
+  log_null,
+  log_model,
+  test = "Chisq"
+)
+
+lrt_log
+
+# Pseudo R² values
+pseudo_r2 <- pscl::pR2(log_model)
+
+pseudo_r2
+
 summary(log_model)
 
 # ── 9.3 Odds ratios with 95% CI ----------------------------------------------
@@ -1491,6 +1516,8 @@ tbl12_gt <- tbl12 %>%
 
 print(tbl12_gt)
 
+broom::glance(log_model)
+
 
 ## VISUALISATIONS FOR LOGISTIC REGRESSION
 # --- Figure 24. Predicted probability of high life expectancy
@@ -1589,9 +1616,7 @@ p_roc <- ggroc(roc_obj, linewidth = 1.2, colour = "#2166AC") +
 print(p_roc)
 
 
-# ── Table 13: Confusion matrix -----------------------------------------------
-# ============================================================
-# Confusion Matrix — Logistic Regression
+# ── Table 13: Confusion matrix — Logistic Regression
 # Life expectancy >70 years
 # ============================================================
 
