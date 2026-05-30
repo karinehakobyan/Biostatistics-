@@ -185,32 +185,47 @@ print(tbl1)
 # ── Table 2: Normality tests --------------------------------------------------
 key_vars <- c("life_exp", "schooling", "income_comp", "log_gdp", "adult_mort")
 
-tbl2 <- map(key_vars, function(v) {
+tbl2 <- purrr::map(key_vars, function(v) {
   
-  # 1. Remove NAs. If you don't do this, mean(), sd(), and shapiro.test() 
-  # will fail or return NA if there is even a single missing value.
-  x <- na.omit(df[[v]]) 
+  x <- as.numeric(na.omit(df[[v]])) 
   
-  # 2. Perform Shapiro-Wilk test (safely capped at 5000 to avoid errors)
-  sw <- shapiro.test(sample(x, min(5000, length(x))))
+  # 1. THE FIX: Safety check for minimum sample size required by shapiro.test
+  if (length(x) >= 3) {
+    sw <- shapiro.test(sample(x, min(5000, length(x))))
+    sw_w   <- round(sw$statistic, 4)
+    sw_p   <- round(sw$p.value, 4)
+    normal <- ifelse(sw$p.value > 0.05, "Yes", "No")
+  } else {
+    # If N < 3, gracefully return NAs instead of crashing
+    sw_w   <- NA
+    sw_p   <- NA
+    normal <- "N/A"
+  }
   
   tibble(
     Variable  = v,
-    N         = length(x), # This is the valid N (excluding NAs)
-    Mean      = round(mean(x), 2),
-    SD        = round(sd(x), 2),
-    Skewness  = round(moments::skewness(x), 3),
-    Kurtosis  = round(moments::kurtosis(x), 3),
-    SW_W      = round(sw$statistic, 4),
-    SW_p      = round(sw$p.value, 4),
-    Normal    = ifelse(sw$p.value > 0.05, "Yes", "No")
+    N         = length(x), 
+    Mean      = round(mean(x, na.rm = TRUE), 2),
+    SD        = round(sd(x, na.rm = TRUE), 2),
+    Skewness  = round(moments::skewness(x, na.rm = TRUE), 3),
+    Kurtosis  = round(moments::kurtosis(x, na.rm = TRUE), 3),
+    SW_W      = sw_w,
+    SW_p      = sw_p,
+    Normal    = normal
   )
   
 }) %>% 
-  list_rbind() %>%   # 3. Modern replacement for map_dfr()
-  mutate(Variable = c("Life Expectancy", "Schooling", "Income Comp. Index",
-                      "log(GDP)", "Adult Mortality"))
-
+  purrr::list_rbind() %>%   
+  mutate(
+    Variable = dplyr::recode_values(Variable,
+                                    "life_exp"    ~ "Life Expectancy", 
+                                    "schooling"   ~ "Schooling",
+                                    "income_comp" ~ "Income Comp. Index",      
+                                    "log_gdp"     ~ "log(GDP)",
+                                    "adult_mort"  ~ "Adult Mortality",         
+                                    default = Variable
+    )
+  )
 tbl2_gt <- tbl2 %>%
   gt() %>%
   tab_header(title = "Table 2. Normality Assessment of Key Continuous Variables") %>%
@@ -459,8 +474,6 @@ p_corr_bar <- tbl3 %>%
 print(p_corr_bar)
 
 
-<<<<<<< HEAD
-
 # ── Pairplot / scatterplot matrix ----------------------------------------
 
 pairplot_df <- df %>%
@@ -477,9 +490,6 @@ GGally::ggpairs(
 # =============================================================================
 # 4. GROUP COMPARISONS
 # =============================================================================
-=======
-# 4. GROUP COMPARISONS ------------
->>>>>>> 0d68e05 (better subheads)
 
 # ── Table 4: Developed vs Developing binary comparison -----------------------
 # Primary: Mann-Whitney (non-normal); Welch t and Cohen's d also reported
@@ -492,50 +502,69 @@ compare_vars <- c("life_exp", "schooling", "income_comp", "log_gdp",
 df <- df %>%
   mutate(across(all_of(compare_vars), as.numeric))
 
-tbl4 <- map(compare_vars, function(v) {
-  
-  # 1. Extract and force to base vector
-  dev   <- na.omit(df[[v]][df$status == "Developed"])
-  devng <- na.omit(df[[v]][df$status == "Developing"])
-  
-  # 2. Wilcoxon test
-  mwu <- wilcox.test(dev, devng, conf.int = FALSE)
-  
-  # 3. The Fix: Strip ALL hidden attributes when building temp_df
-  # as.numeric(as.vector()) completely destroys any haven labels or matrix shapes
-  temp_df <- tibble(
-    value  = as.numeric(as.vector(c(dev, devng))), 
-    status = as.character(c(rep("Developed", length(dev)), rep("Developing", length(devng))))
-  )
-  
-  # 4. Calculate Cohen's d
-  cd <- rstatix::cohens_d(temp_df, value ~ status)
-  
-  tibble(
-    Variable     = v,
-    Dev_Median   = round(median(dev), 2),
-    Dev_IQR      = paste0("(", round(quantile(dev, .25), 1), "-",
-                          round(quantile(dev, .75), 1), ")"),
-    Devng_Median = round(median(devng), 2),
-    Devng_IQR    = paste0("(", round(quantile(devng, .25), 1), "-",
-                          round(quantile(devng, .75), 1), ")"),
-    W            = round(mwu$statistic, 1),
-    p_value      = round(mwu$p.value, 4),
-    Cohens_d     = round(abs(cd$effsize), 3)
-  )
-  
-}) %>% 
-  bind_rows() %>%
+# Improved ---------
+# 1. Isolate the target data and strip haven labels immediately
+long_df <- df %>%
+  select(status, all_of(compare_vars)) %>%
+  filter(status %in% c("Developed", "Developing")) %>%
+  pivot_longer(cols = -status, names_to = "Variable", values_to = "value") %>%
+  drop_na(value) %>%
   mutate(
-    sig = case_when(p_value < 0.001 ~ "***", p_value < 0.01 ~ "**",
-                    p_value < 0.05  ~ "*",   TRUE           ~ ""),
-    Variable = dplyr::recode(Variable,
-                             life_exp    = "Life Expectancy (years)", schooling   = "Schooling (years)",
-                             income_comp = "Income Comp. Index",      log_gdp     = "log(GDP per capita)",
-                             adult_mort  = "Adult Mortality",         hiv_aids    = "HIV/AIDS Deaths",
-                             tot_expend  = "Health Expenditure (% GDP)"
-    )
+    value = as.numeric(value),     # This safely destroys haven labels globally
+    status = as.character(status)
   )
+
+# 2. Let rstatix handle the calculations using group_by
+stats_tests <- long_df %>%
+  group_by(Variable) %>%
+  wilcox_test(value ~ status) %>%
+  select(Variable, W = statistic, p_value = p)
+
+cohens_eff <- long_df %>%
+  group_by(Variable) %>%
+  cohens_d(value ~ status) %>%
+  select(Variable, Cohens_d = effsize)
+
+# 3. Calculate Medians & IQRs, then join everything together
+tbl4 <- long_df %>%
+  group_by(Variable, status) %>%
+  summarise(
+    Med = round(median(value), 2),
+    IQR = paste0("(", round(quantile(value, .25), 1), "-", round(quantile(value, .75), 1), ")"),
+    .groups = "drop"
+  ) %>%
+  # Pivot wider to get Developed and Developing as columns
+  pivot_wider(names_from = status, values_from = c(Med, IQR)) %>%
+  rename(
+    Dev_Median   = Med_Developed,
+    Dev_IQR      = IQR_Developed,
+    Devng_Median = Med_Developing,
+    Devng_IQR    = IQR_Developing
+  ) %>%
+  
+  # 4. Join our tests and format
+  left_join(stats_tests, by = "Variable") %>%
+  left_join(cohens_eff, by = "Variable") %>%
+  mutate(
+    sig = case_when(
+      p_value < 0.001 ~ "***", 
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",  
+      TRUE            ~ ""
+    ),
+    Variable = recode_values(Variable,
+                             "life_exp"    ~ "Life Expectancy (years)", 
+                             "schooling"   ~ "Schooling (years)",
+                             "income_comp" ~ "Income Comp. Index",      
+                             "log_gdp"     ~ "log(GDP per capita)",
+                             "adult_mort"  ~ "Adult Mortality",         
+                             "hiv_aids"    ~ "HIV/AIDS Deaths",
+                             "tot_expend"  ~ "Health Expenditure (% GDP)",
+                             default = Variable
+    )
+  ) %>%
+  select(Variable, Dev_Median, Dev_IQR, Devng_Median, Devng_IQR, W, p_value, Cohens_d, sig)
+# End ---------
 
 tbl4_gt <- tbl4 %>%
   select(Variable, Dev_Median, Dev_IQR, Devng_Median, Devng_IQR, W, p_value, sig, Cohens_d) %>%
@@ -1612,7 +1641,6 @@ p_roc <- ggroc(roc_obj, linewidth = 1.2, colour = "#2166AC") +
   theme_pub
 
 print(p_roc)
-
 
 # ── Table 13: Confusion matrix — Logistic Regression
 # Life expectancy >70 years

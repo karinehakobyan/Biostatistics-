@@ -1,0 +1,166 @@
+---
+title: "Biostatistics"
+format: revealjs
+editor: visual
+---
+
+## Dataset Background
+
+Health and mortality indicators extracted directly from the **World Health Organization (WHO)** repository
+
+Corresponding economic data compiled from **United Nations (UN)** databases
+
+Individual data files merged into a unified dataset covering **193 countries**
+
+## Temporal Scope
+
+Spans a 16-year period from **2000 to 2015**
+
+Captures a modern era of rapid global health sector development and significant shifts in human mortality rates
+
+## **Data Cleaning & Quality Control - Not by Us**
+
+Initial visual inspection revealed missing values concentrated primarily in **GDP, Population, and Hepatitis B** metrics.
+
+Data gaps were systematically audited in R using the Missmap command.
+
+Missing observations belonged mostly to less visible/smaller nations (e.g., Vanuatu, Tonga, Togo, Cabo Verde).
+
+**Decision:** These specific countries were excluded from final predictive modeling due to data gaps.
+
+## **Final Dataset Dimensions**
+
+Consists of **2,938 rows** and **22 columns**.
+
+Yields **20 distinct predicting variables** across the 193 countries.
+
+## Our Review
+
+| Variable | Number Missing | Percent Missing |
+|------------------------|------------------------|------------------------|
+| Population | 652 | 22,2 |
+| Hepatitis B Immunization Coverage | 553 | 18,8 |
+| GDP per capita (USD) | 448 | 15,2 |
+| Expenditure on Health as % of Total Expenditure | 226 | 7,7 |
+| Alcohol Consumption | 194 | 6,6 |
+| Income Composition | 167 | 5,7 |
+| Number of Years of Schooling | 163 | 5,5 |
+| Average BMI | 34 | 1,2 |
+| Prevalence of Thinness % among children 10 - 19 | 34 | 1,2 |
+| Prevalence of Thinness % among children 5 - 9 | 34 | 1,2 |
+| Polio Immunisation Coverage % among 1 year olds | 19 | 0,6 |
+| Diphtheria Tetanus Toxoid and Pertussis Immunization Coverage % among 1-year-olds | 19 | 0,6 |
+| Life Expectancy | 10 | 0,3 |
+| Adult Mortality Rates | 10 | 0,3 |
+
+---
+title2: "But..."
+format: revealjs
+editor: visual
+---
+
+---
+title3: "Is the Data Accurate?"
+format: revealjs
+editor: visual
+---
+
+## Summary Statistics
+
+```{r}
+library(tidyverse)
+library(broom)
+library(janitor)
+library(skimr)
+
+df_raw <- read.csv("life_expectancy.csv") %>%
+  clean_names() %>%
+  rename(
+    life_exp      = life_expectancy,
+    adult_mort    = adult_mortality,
+    pct_expend    = percentage_expenditure,
+    tot_expend    = total_expenditure,
+    under5_deaths = under_five_deaths,
+    thinness_1_19 = thinness_1_19_years,
+    thinness_5_9  = thinness_5_9_years,
+    income_comp   = income_composition_of_resources
+  ) %>%
+  mutate(status = factor(status, levels = c("Developed", "Developing")))
+summary(df_raw)
+```
+
+## Countries
+
+![](images/clipboard-4158677016.png)
+
+## Plots
+
+![](images/clipboard-2251676276.png)
+
+## Average Expenditure
+
+![](images/clipboard-3046631096.png)
+
+## Schooling
+
+![](images/clipboard-3352603057.png)
+
+## BMI
+
+![](images/clipboard-2099393484.png)
+
+## Combined
+
+![](images/clipboard-948302420.png)
+
+## World Map
+
+![](images/clipboard-2380783622.png)
+
+## Trends
+
+![](images/clipboard-920570809.png)
+
+## GDP and Life Expectancy
+
+![](images/clipboard-2654712913.png)
+
+## Logistic Regression
+
+Since we do not have binary variables to analyse, we chose to confirm that indeed higher life expectancy (\>70 years) can be achieved by immunisation, schooling and higher GDP
+
+What is the probability that a country achieves a high life expectancy (greater than 70 years), given its immunization coverage, economic baseline, and educational attainment?
+
+## Model Specifications
+
+$$\log\left(\frac{P(Y=1)}{1-P(Y=1)}\right)=\beta_0+ \beta_1 \mathrm{Polio}+ \beta_2 \mathrm{Diphtheria}+ \beta_3 \log(\mathrm{GDP})+ \cdots$$
+
+|  |  |  |
+|---------------------|-----------------------|-----------------------------|
+| **Component** | **Variable in Dataset** | **Role** |
+| **Outcome (**$Y$) | high_life_exp | 1 if life_exp $\ge$ 70, 0 if otherwise |
+| **Predictor (**$X_1$) | polio | Immunization coverage (%) |
+| **Predictor (**$X_2$) | diphtheria | Immunization coverage (%) |
+| **Predictor (**$X_3$) | gdp (log-transformed) | Economic determinant |
+| **Predictor (**$X_4$) | schooling | Social determinant (Years) |
+| **Confounder (**$X_5$) | status | Categorical adjustment (Developed/Developing) |
+
+```{r}
+
+# 1. Create the binary outcome variable
+df_logit <- df_raw %>%
+  # Drop rows with missing values in our variables of interest to avoid errors
+  drop_na(life_exp, polio, diphtheria, gdp, schooling, status) %>%
+  mutate(high_life_exp = ifelse(life_exp >= 70, 1, 0))
+
+# 2. Fit the multiple logistic regression model
+# Note: We log-transform GDP directly in the formula to handle right-skewness
+logit_model <- glm(
+  high_life_exp ~ polio + diphtheria + log(gdp) + schooling + status,
+  data = df_logit,
+  family = binomial(link = "logit")
+)
+
+# 3. View the summary statistics (Log-Odds)
+summary(logit_model)
+```
