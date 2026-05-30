@@ -96,17 +96,85 @@ cat("\nMissing data (variables with any NA):\n")
 print(missing_summary)
 
 # ── 1.3  Drop rows missing outcome or key predictors; impute remainder --------
-df <- df_raw %>%
+df_dropped <- df_raw %>%
   filter(!is.na(life_exp), !is.na(schooling),
          !is.na(income_comp), !is.na(gdp)) %>%
   mutate(across(where(is.numeric),
                 ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+# VARIATION 2: Grouped median imputation (Specific to Country)
+df_med <- df_raw %>%
+  # Group by country so mutations happen within each nation's timeline
+  group_by(country) %>%
+  mutate(across(where(is.numeric), function(x) {
+    # Calculate the median for this specific country
+    country_median <- median(x, na.rm = TRUE)
+    
+    # If the country has valid data, use its median. 
+    # If it's missing entirely, leave it as NA for the next step.
+    if (!is.na(country_median)) {
+      ifelse(is.na(x), country_median, x)
+    } else {
+      x 
+    }
+  })) %>%
+  ungroup() %>% # Always ungroup after group_by modifications
+  
+  # CRITICAL FALLBACK STEP: 
+  # For countries completely missing GDP/Population across all 15 years,
+  # impute the global median baseline for that specific year.
+  group_by(year) %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .))) %>%
+  ungroup()
 
+# lets see the changes-------------
+# 1. Create the shadow flag columns to map where original NAs are located
+df_flags <- df_raw %>%
+  # Use c() to combine selection rules and -any_of() to safely exclude "year"
+  mutate(across(c(where(is.numeric), -any_of("year")), 
+                ~ as.numeric(is.na(.)), 
+                .names = "{.col}_imputed")) 
+
+# 2. Perform the country-specific median imputation
+df_imputed_highlighted <- df_flags %>%
+  group_by(country) %>%
+  # Exclude "year" and our newly created "_imputed" columns from the math
+  mutate(across(c(where(is.numeric), -ends_with("_imputed"), -any_of("year")), function(x) {
+    country_median <- median(x, na.rm = TRUE)
+    if (!is.na(country_median)) {
+      ifelse(is.na(x), country_median, x)
+    } else {
+      x 
+    }
+  })) %>%
+  ungroup() %>%
+  
+  # Fallback step: Global median baseline for that specific year
+  group_by(year) %>%
+  mutate(across(c(where(is.numeric), -ends_with("_imputed"), -any_of("year")), 
+                ~ ifelse(is.na(.), median(., na.rm = TRUE), .))) %>%
+  ungroup()
+
+# ------------------------------------------------------------------------------
+# HOW TO USE THESE HIGHLIGHT FLAGS
+# ------------------------------------------------------------------------------
+
+# Example A: View rows where GDP was imputed to inspect the values
+df_imputed_highlighted %>%
+  filter(gdp_imputed == 1) %>%
+  select(country, year, gdp, gdp_imputed) %>%
+  head()
+
+# Example B: Calculate exactly how many values were imputed per variable
+imputation_summary <- df_imputed_highlighted %>%
+  summarise(across(ends_with("_imputed"), sum)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Total_Imputed_Rows")
+
+print(imputation_summary)
 cat("\nCleaned dimensions:", nrow(df), "rows x", ncol(df), "columns\n")
 cat("Status distribution:\n"); print(table(df$status))
 
 # ── 1.4  Derived variables ----------------------------------------------------
-df <- df %>%
+df <- df_dropped %>% #change to df_med for median imputed values
   mutate(
     log_gdp       = log1p(gdp),
     log_population = log1p(population),
@@ -143,22 +211,30 @@ df_t1 <- df %>%
   group_by(country) %>%
   slice_max(year, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
-  select(status, life_exp, schooling, income_comp, log_gdp,
+  # SAFEGUARD: Force R to treat all your predictors as numeric
+  # This prevents character/factor bugs if "NA" strings snuck into the data
+  mutate(across(-c(country, status), as.numeric)) %>%
+  select(status, life_exp, schooling, income_comp, gdp,
          tot_expend, adult_mort, infant_deaths, hiv_aids, bmi, alcohol)
 
 tbl1 <- df_t1 %>%
   tbl_summary(
     by = status,
+    
+    # THE FIX: Explicitly force gtsummary to treat everything as continuous
+    # (It automatically ignores 'status' since it is the 'by' grouping variable)
+    type = list(everything() ~ "continuous"), 
+    
     statistic = list(
-      all_continuous()  ~ "{mean} ({sd})",
-      all_categorical() ~ "{n} ({p}%)"
+      all_continuous()  ~ "{mean} ({sd})"
+      # Removed the categorical statistic since you have no categorical predictors here
     ),
     digits  = all_continuous() ~ 2,
     label   = list(
       life_exp      ~ "Life Expectancy (years)",
       schooling     ~ "Schooling (years)",
       income_comp   ~ "Income Composition Index",
-      log_gdp       ~ "log(GDP per capita)",
+      gdp       ~ "GDP per capita)",
       tot_expend    ~ "Health Expenditure (% GDP)",
       adult_mort    ~ "Adult Mortality (per 1,000)",
       infant_deaths ~ "Infant Deaths (per 1,000)",
@@ -170,8 +246,8 @@ tbl1 <- df_t1 %>%
   ) %>%
   add_p(
     test = list(
-      all_continuous()  ~ "wilcox.test",
-      all_categorical() ~ "chisq.test"
+      all_continuous()  ~ "wilcox.test"
+      # Removed categorical test since everything is forced to continuous
     ),
     pvalue_fun = ~ style_pvalue(.x, digits = 3)
   ) %>%
@@ -182,8 +258,65 @@ tbl1 <- df_t1 %>%
 
 print(tbl1)
 
-# ── Table 2: Normality tests --------------------------------------------------
-key_vars <- c("life_exp", "schooling", "income_comp", "log_gdp", "adult_mort")
+# PREP THE DATA FOR MULTI-YEAR ANALYSIS
+# ------------------------------------------------------------------------------
+df_years <- df %>%
+  # Select milestone years to keep the table readable
+  filter(year %in% c(2000, 2007, 2015)) %>%
+  
+  # ERROR FIX: Strip NAs and force 'status' into a clean character string 
+  # to destroy any phantom factor levels causing the 2-level error
+  filter(!is.na(status) & status != "") %>%
+  mutate(status = str_trim(as.character(status))) %>%
+  
+  # Force predictors to numeric to prevent the Chi-Square bug
+  mutate(across(-c(country, status, year), as.numeric)) %>%
+  
+  # Select final columns
+  select(year, status, life_exp, schooling, income_comp, gdp,
+         tot_expend, adult_mort, infant_deaths, hiv_aids, bmi, alcohol)
+
+
+# 2. GENERATE THE STRATIFIED YEAR-BY-YEAR TABLE -- better------
+# ------------------------------------------------------------------------------
+tbl_yearly <- df_years %>%
+  # tbl_strata splits the table into side-by-side columns based on the 'year'
+  tbl_strata(
+    strata = year,
+    .tbl_fun = ~ .x %>%
+      tbl_summary(
+        by = status,
+        type = list(everything() ~ "continuous"), 
+        statistic = list(all_continuous() ~ "{mean} ({sd})"),
+        digits  = all_continuous() ~ 2,
+        label   = list(
+          life_exp      ~ "Life Expectancy (years)",
+          schooling     ~ "Schooling (years)",
+          income_comp   ~ "Income Composition Index",
+          gdp           ~ "GDP per capita)",
+          tot_expend    ~ "Health Expenditure (% GDP)",
+          adult_mort    ~ "Adult Mortality (per 1,000)",
+          infant_deaths ~ "Infant Deaths (per 1,000)",
+          hiv_aids      ~ "HIV/AIDS Deaths (per 1,000)",
+          bmi           ~ "Mean BMI",
+          alcohol       ~ "Alcohol Consumption (L/capita)"
+        ),
+        missing = "no"
+      ) %>%
+      add_p(
+        test = list(all_continuous() ~ "wilcox.test"),
+        pvalue_fun = ~ style_pvalue(.x, digits = 3)
+      ) %>%
+      modify_header(label ~ "**Variable**")
+  ) %>%
+  # Add a clean caption to the overall stratified table
+  modify_caption("**Table 2.** Longitudinal characteristics by country development status (2000 vs 2007 vs 2015)")
+
+# Print the table
+print(tbl_yearly)
+
+# ── Table 2: Normality tests -- uses all observ--------------------------------
+key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort") #can use log_gdp
 
 tbl2 <- purrr::map(key_vars, function(v) {
   
@@ -221,7 +354,7 @@ tbl2 <- purrr::map(key_vars, function(v) {
                                     "life_exp"    ~ "Life Expectancy", 
                                     "schooling"   ~ "Schooling",
                                     "income_comp" ~ "Income Comp. Index",      
-                                    "log_gdp"     ~ "log(GDP)",
+                                    "gdp"     ~ "GDP",
                                     "adult_mort"  ~ "Adult Mortality",         
                                     default = Variable
     )
@@ -249,7 +382,7 @@ p_hist <- df %>%
     life_exp    = "Life Expectancy",
     schooling   = "Schooling (years)",
     income_comp = "Income Comp. Index",
-    log_gdp     = "log(GDP per capita)",
+    gdp     = "GDP per capita",
     adult_mort  = "Adult Mortality"
   )) %>%
   ggplot(aes(Value)) +
