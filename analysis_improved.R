@@ -293,7 +293,7 @@ tbl_yearly <- df_years %>%
           life_exp      ~ "Life Expectancy (years)",
           schooling     ~ "Schooling (years)",
           income_comp   ~ "Income Composition Index",
-          gdp           ~ "GDP per capita)",
+          gdp           ~ "GDP per capita",
           tot_expend    ~ "Health Expenditure (% GDP)",
           adult_mort    ~ "Adult Mortality (per 1,000)",
           infant_deaths ~ "Infant Deaths (per 1,000)",
@@ -316,7 +316,7 @@ tbl_yearly <- df_years %>%
 print(tbl_yearly)
 
 # ── Table 2: Normality tests -- uses all observ--------------------------------
-key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort") #can use log_gdp
+key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort", "log_gdp") #can use log_gdp
 
 tbl2 <- purrr::map(key_vars, function(v) {
   
@@ -355,6 +355,7 @@ tbl2 <- purrr::map(key_vars, function(v) {
                                     "schooling"   ~ "Schooling",
                                     "income_comp" ~ "Income Comp. Index",      
                                     "gdp"     ~ "GDP",
+                                    "log_gdp" ~ "log GDP",
                                     "adult_mort"  ~ "Adult Mortality",         
                                     default = Variable
     )
@@ -383,6 +384,7 @@ p_hist <- df %>%
     schooling   = "Schooling (years)",
     income_comp = "Income Comp. Index",
     gdp     = "GDP per capita",
+    log_gdp = "log(GDP per capita)",
     adult_mort  = "Adult Mortality"
   )) %>%
   ggplot(aes(Value)) +
@@ -393,7 +395,7 @@ p_hist <- df %>%
 print(p_hist)
 
 # ── Figure 2: Violin-boxplot by status ----------------------------------------
-p_violin_status <- ggplot(df, aes(status, life_exp, fill = status)) +
+p_violin_status <- ggplot(df_raw, aes(status, life_exp, fill = status)) +
   geom_violin(alpha = 0.35, colour = NA) +
   geom_boxplot(width = 0.22, outlier.shape = 21, outlier.size = 1.5,
                outlier.alpha = 0.5) +
@@ -404,7 +406,7 @@ p_violin_status <- ggplot(df, aes(status, life_exp, fill = status)) +
 print(p_violin_status)
 
 # ── Figure 3: Countries by status (bar) ---------------------------------------
-p_bar_status <- df %>%
+p_bar_status <- df_raw %>%
   distinct(country, status) %>%
   count(status) %>%
   ggplot(aes(status, n, fill = status)) +
@@ -414,6 +416,93 @@ p_bar_status <- df %>%
   labs(title = "Figure 3. Number of Countries by Development Status",
        x = "Status", y = "Count")
 print(p_bar_status)
+
+# maps
+# 1. PREP THE WHO DATA (Filter years and fix country names)
+# ----------------------------------------------------------------------------
+df_map_data <- df_raw %>%
+  filter(year %in% c(2000, 2005, 2010, 2015), !is.na(life_exp)) %>%
+  select(country, year, life_exp) %>%
+  # Translate WHO formal names to match the 'maps' package dictionary
+  mutate(country = case_match(country,
+                              "United States of America"                             ~ "USA",
+                              "United Kingdom of Great Britain and Northern Ireland" ~ "UK",
+                              "Russian Federation"                                   ~ "Russia",
+                              "Republic of Korea"                                    ~ "South Korea",
+                              "Democratic People's Republic of Korea"                ~ "North Korea",
+                              "Iran (Islamic Republic of)"                           ~ "Iran",
+                              "Bolivia (Plurinational State of)"                     ~ "Bolivia",
+                              "Venezuela (Bolivarian Republic of)"                   ~ "Venezuela",
+                              "Viet Nam"                                             ~ "Vietnam",
+                              "Syrian Arab Republic"                                 ~ "Syria",
+                              "United Republic of Tanzania"                          ~ "Tanzania",
+                              "Côte d'Ivoire"                                        ~ "Ivory Coast",
+                              "Lao People's Democratic Republic"                     ~ "Laos",
+                              "Congo"                                                ~ "Republic of Congo",
+                              .default = as.character(country)
+  ))
+
+# 2. PREP THE MAP BASE (Expand for all 4 years)
+# ------------------------------------------------------------------------------
+# Extract the base world map
+world_base <- map_data("world") %>%
+  filter(region != "Antarctica") # Drop Antarctica to save space
+
+# To facet polygons properly without dropping countries that lack data in a specific 
+# year, we cross the base map with our target years.
+world_expanded <- expand_grid(
+  world_base,
+  year = c(2000, 2005, 2010, 2015)
+)
+
+# Join our cleaned WHO data to the expanded map coordinates
+map_final <- world_expanded %>%
+  left_join(df_map_data, by = c("region" = "country", "year" = "year"))
+
+##| label: fig-life-exp-sequence
+##| fig-cap: "Global Life Expectancy Progression"
+##| results: asis
+##| warning: false
+##| message: false
+
+# This dynamism will always end in tears :)
+
+# Loop through our target years sequentially
+#for (target_year in c(2000, 2005, 2010, 2015)) {
+
+# 1. Force Quarto to create a new slide with a title
+cat("\n\n---\n\n## Global Life Expectancy in", target_year, "\n\n")
+
+# Filter the data for just this specific year
+map_single_year <- map_final %>% filter(year == target_year)
+
+p_single <- ggplot(map_single_year, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  geom_polygon(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(
+    option = "magma",
+    direction = -1,
+    na.value = "gray85",
+    name = "Life Expectancy",
+    limits = c(40, 85) # CRITICAL: Lock the scale limits so colors mean the same thing every year
+  ) +
+  labs(
+    title = paste("Global Life Expectancy in", target_year), # Dynamic title
+    subtitle = "Tracking longitudinal improvements"
+  ) +
+  theme_void(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, margin = margin(b = 15))
+  )
+# 3. Print the plot to the new slide
+print(p_single)
+
+# 4. Add a space after the plot so the next slide renders cleanly
+cat("\n\n")
+
+}
 
 
 # =============================================================================
@@ -689,7 +778,7 @@ tbl4 <- long_df %>%
                              "life_exp"    ~ "Life Expectancy (years)", 
                              "schooling"   ~ "Schooling (years)",
                              "income_comp" ~ "Income Comp. Index",      
-                             "log_gdp"     ~ "log(GDP per capita)",
+                             "gdp"     ~ "GDP per capita",
                              "adult_mort"  ~ "Adult Mortality",         
                              "hiv_aids"    ~ "HIV/AIDS Deaths",
                              "tot_expend"  ~ "Health Expenditure (% GDP)",

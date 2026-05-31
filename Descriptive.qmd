@@ -34,37 +34,6 @@ Consists of **2,938 rows** and **22 columns**.
 
 Yields **20 distinct predicting variables** across the 193 countries.
 
-## Our Review
-
-| Variable | Number Missing | Percent Missing |
-|------------------------|------------------------|------------------------|
-| Population | 652 | 22,2 |
-| Hepatitis B Immunization Coverage | 553 | 18,8 |
-| GDP per capita (USD) | 448 | 15,2 |
-| Expenditure on Health as % of Total Expenditure | 226 | 7,7 |
-| Alcohol Consumption | 194 | 6,6 |
-| Income Composition | 167 | 5,7 |
-| Number of Years of Schooling | 163 | 5,5 |
-| Average BMI | 34 | 1,2 |
-| Prevalence of Thinness % among children 10 - 19 | 34 | 1,2 |
-| Prevalence of Thinness % among children 5 - 9 | 34 | 1,2 |
-| Polio Immunisation Coverage % among 1 year olds | 19 | 0,6 |
-| Diphtheria Tetanus Toxoid and Pertussis Immunization Coverage % among 1-year-olds | 19 | 0,6 |
-| Life Expectancy | 10 | 0,3 |
-| Adult Mortality Rates | 10 | 0,3 |
-
----
-title2: "But..."
-format: revealjs
-editor: visual
----
-
----
-title3: "Is the Data Accurate?"
-format: revealjs
-editor: visual
----
-
 ## Summary Statistics
 
 ```{r}
@@ -89,41 +58,760 @@ df_raw <- read.csv("life_expectancy.csv") %>%
 summary(df_raw)
 ```
 
+## Missing data
+
+Can be dropped, yields
+
+```{r}
+# ── 1.3  Drop rows missing outcome or key predictors; impute remainder --------
+df_dropped <- df_raw %>%
+  filter(!is.na(life_exp), !is.na(schooling),
+         !is.na(income_comp), !is.na(gdp)) %>%
+  mutate(across(where(is.numeric),
+                ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+summary(df_dropped)
+```
+
+## Missing data
+
+Can be filled by median
+
+```{r}
+# VARIATION 2: Grouped median imputation (Specific to Country)
+df_med <- df_raw %>%
+  # Group by country so mutations happen within each nation's timeline
+  group_by(country) %>%
+  mutate(across(where(is.numeric), function(x) {
+    # Calculate the median for this specific country
+    country_median <- median(x, na.rm = TRUE)
+    
+    # If the country has valid data, use its median. 
+    # If it's missing entirely, leave it as NA for the next step.
+    if (!is.na(country_median)) {
+      ifelse(is.na(x), country_median, x)
+    } else {
+      x 
+    }
+  })) %>%
+  ungroup() %>% # Always ungroup after group_by modifications
+  
+  # CRITICAL FALLBACK STEP: 
+  # For countries completely missing GDP/Population across all 15 years,
+  # impute the global median baseline for that specific year.
+  group_by(year) %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .))) %>%
+  ungroup()
+summary(df_med)
+```
+
+## Impact of actions
+::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
+```{r}
+library(tidyverse)
+library(gtsummary)
+
+# ------------------------------------------------------------------------------
+# 1. COMBINE THE DATASETS
+# ------------------------------------------------------------------------------
+# We tag each dataset with a new column identifying how it was processed,
+# then bind them all together into one massive dataframe.
+df_combined <- bind_rows(
+  df_raw %>% mutate(Handling_Method = "1. Raw Data (NAs Present)"),
+  df_dropped %>% mutate(Handling_Method = "2. Dropped (Only for the key var)"),
+  df_med %>% mutate(Handling_Method = "3. Imputed (Country Medians)")
+) %>%
+  # Select key variables to keep the table clean and readable
+  select(Handling_Method, life_exp, schooling, income_comp, gdp, 
+         tot_expend, adult_mort, infant_deaths, bmi) %>%
+  # Ensure all predictors are numeric to prevent calculation errors
+  mutate(across(-Handling_Method, as.numeric))
+
+# ------------------------------------------------------------------------------
+# 2. GENERATE THE COMPARISON TABLE
+# ------------------------------------------------------------------------------
+tbl_comparison <- df_combined %>%
+  tbl_summary(
+    by = Handling_Method,
+    type = list(everything() ~ "continuous"),
+    statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    digits = all_continuous() ~ 2,
+    # 'ifany' explicitly displays a row showing exactly how many NAs are in the 
+    # Raw column, while confirming there are 0 in the Dropped and Imputed columns
+    missing = "ifany", 
+    missing_text = "Missing Values"
+  ) %>%
+  add_p(
+    # Tests for a statistically significant difference across the 3 datasets
+    test = list(all_continuous() ~ "kruskal.test"),
+    pvalue_fun = ~ style_pvalue(.x, digits = 3)
+  ) %>%
+  add_overall() %>%
+  bold_labels() %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Table 3. Impact of Missing Data Handling on Variable Distributions**")
+
+# Print the final table
+tbl_comparison
+```
+:::
+
 ## Countries
+```{r}
+# 1. PREP DATA: Isolate unique countries to prevent 16x overcounting
+# ------------------------------------------------------------------------------
+df_status_counts <- df_raw %>%
+  # Keep only one row per country/status combination
+  distinct(country, status) %>%
+  # Clean up any missing or blank statuses
+  filter(!is.na(status) & status != "") %>%
+  mutate(status = str_trim(as.character(status)))
 
-![](images/clipboard-4158677016.png)
+df_cal <- df_med %>% #change to df_dropped for dropped NA values
+  mutate(
+    log_gdp       = log1p(gdp),
+    log_population = log1p(population),
+    schooling_cat = cut(schooling,
+                        breaks = quantile(schooling, c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                        labels = c("Low", "Medium", "High"),
+                        include.lowest = TRUE),
+    income_cat    = cut(income_comp,
+                        breaks = quantile(income_comp, c(0, 0.25, 0.75, 1), na.rm = TRUE),
+                        labels = c("Low", "Middle", "High"),
+                        include.lowest = TRUE),
+    life_exp_cat  = cut(life_exp,
+                        breaks = c(0, 60, 70, 80, Inf),
+                        labels = c("<60", "60-70", "70-80", ">80"),
+                        right  = FALSE),
+    year_bracket  = cut(year,
+                        breaks = c(1999, 2004, 2009, 2015),
+                        labels = c("2000-2004", "2005-2009", "2010-2015"),
+                        include.lowest = TRUE)
+  )
+# ------------------------------------------------------------------------------
+# 2. GENERATE THE PLOT
+# ------------------------------------------------------------------------------
+p_status <- ggplot(df_status_counts, aes(x = status, fill = status)) +
+  # Draw the bars with a slight transparency (alpha) and crisp black borders
+  geom_bar(width = 0.5, color = "black", alpha = 0.85) +
+  
+  # Automatically calculate the total count and add it as a text label above each bar
+  geom_text(stat = "count", aes(label = after_stat(count)), 
+            vjust = -0.8, fontface = "bold", size = 5.5) +
+  
+  # Assign professional, high-contrast colors to the two categories
+  scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  # Add clear, descriptive labels
+  labs(
+    title = "Figure 1. Global Distribution of Country Development Status",
+    subtitle = "Total unique countries represented in the WHO dataset",
+    x = "Development Status",
+    y = "Number of Countries"
+  ) +
+  
+  # Apply a clean, minimalist theme ideal for presentations or Quarto documents
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",                  # Hide the redundant legend
+    panel.grid.major.x = element_blank(),      # Remove vertical grid lines for a cleaner look
+    plot.title = element_text(face = "bold")
+  )
 
-## Plots
+# 3. Render the plot
+p_status
+```
 
-![](images/clipboard-2251676276.png)
+
+## Distributions
+
+```{r}
+key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort", "log_gdp")
+
+# ── Global ggplot theme -------------------------------------------------------
+theme_pub <- theme_classic(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(size = 10, colour = "grey40"),
+    axis.title      = element_text(face = "bold"),
+    legend.position = "bottom",
+    strip.text      = element_text(face = "bold"),
+    strip.background = element_rect(fill = "grey92", colour = NA),
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank()
+  )
+theme_set(theme_pub)
+
+palette_status <- c("Developed" = "#2166AC", "Developing" = "#D6604D")
+# ── Figure 2: Distribution panel ----------------------------------------------
+p_hist <- df_cal %>% #used median filled and not the raw
+  select(all_of(key_vars)) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = dplyr::recode(Variable,
+    life_exp    = "Life Expectancy",
+    schooling   = "Schooling (years)",
+    income_comp = "Income Comp. Index",
+    gdp     = "GDP per capita",
+    log_gdp = "log(GDP per capita)",
+    adult_mort  = "Adult Mortality"
+  )) %>%
+  ggplot(aes(Value)) +
+  geom_histogram(bins = 35, fill = "#2166AC", colour = "white", alpha = 0.85) +
+  facet_wrap(~ Variable, scales = "free", ncol = 3) +
+  labs(title = "Figure 2. Distribution of Key Variables",
+       x = NULL, y = "Frequency")
+p_hist
+```
+
+
+## Life expectancy
+
+```{r}
+# ── Global ggplot theme -------------------------------------------------------
+theme_pub <- theme_classic(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(size = 10, colour = "grey40"),
+    axis.title      = element_text(face = "bold"),
+    legend.position = "bottom",
+    strip.text      = element_text(face = "bold"),
+    strip.background = element_rect(fill = "grey92", colour = NA),
+    panel.grid.major = element_line(colour = "grey92"),
+    panel.grid.minor = element_blank()
+  )
+theme_set(theme_pub)
+
+palette_status <- c("Developed" = "#2166AC", "Developing" = "#D6604D")
+
+p_violin_status <- ggplot(df_dropped, aes(status, life_exp, fill = status)) +
+  geom_violin(alpha = 0.35, colour = NA) +
+  geom_boxplot(width = 0.22, outlier.shape = 21, outlier.size = 1.5,
+               outlier.alpha = 0.5) +
+  scale_fill_manual(values = palette_status) +
+  labs(title = "Figure 3. Life Expectancy by Country Development Status",
+       x = "Development Status", y = "Life Expectancy (years)") +
+  guides(fill = "none")
+p_violin_status
+```
 
 ## Average Expenditure
+```{r}
+#| label: fig-expenditure-trend
+#| fig-cap: "Longitudinal trends in health expenditure as a percentage of GDP."
+#| warning: false
+#| message: false
 
-![](images/clipboard-3046631096.png)
+# 1. PREP DATA: Calculate the yearly average expenditure per group
+# ------------------------------------------------------------------------------
+df_expend_trend <- df_raw %>%
+  # Clean up status and drop rows where expenditure data is entirely missing
+  filter(!is.na(status) & status != "", !is.na(tot_expend)) %>%
+  mutate(status = str_trim(as.character(status))) %>%
+  
+  # Group by both year and status to calculate the averages
+  group_by(year, status) %>%
+  summarise(
+    avg_expend = mean(tot_expend, na.rm = TRUE),
+    .groups = "drop" # Always drop groups after summarising to prevent downstream bugs
+  )
+
+# -------------------------------------------------------------------------
+# 2. GENERATE THE PLOT
+# ------------------------------------------------------------------------------
+p_expend <- ggplot(df_expend_trend, aes(x = year, y = avg_expend, 
+                                        color = status, group = status)) +
+  
+  # Draw the lines and add points for each specific year
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  
+  # Apply the same high-contrast color palette for consistency across your slides
+  scale_color_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  # Force the X-axis to show every 2 or 3 years so it doesn't look cluttered
+  scale_x_continuous(breaks = seq(2000, 2015, by = 3)) +
+  
+  # Add professional labels
+  labs(
+    title = "Figure 4. Average Health Expenditure by Development Status",
+    subtitle = "Tracking expenditure as a percentage of GDP (2000 - 2015)",
+    x = "Year",
+    y = "Average Health Expenditure (% GDP)",
+    color = "Country Status"
+  ) +
+  
+  # Apply a minimalist presentation theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank() # Removes the distraction of smaller gridlines
+  )
+
+# 3. Render the plot
+p_expend
+```
+
 
 ## Schooling
+```{r}
+#| label: fig-schooling-boxplot
+#| fig-cap: "Distribution of Schooling Years by Country Development Status"
+#| warning: false
+#| message: false
 
-![](images/clipboard-3352603057.png)
+library(tidyverse)
+
+# ------------------------------------------------------------------------------
+# 1. PREP DATA: Clean status labels and remove missing schooling data
+# ------------------------------------------------------------------------------
+df_schooling <- df_raw %>%
+  filter(!is.na(status) & status != "", !is.na(schooling)) %>%
+  mutate(status = str_trim(as.character(status)))
+
+# ------------------------------------------------------------------------------
+# 2. GENERATE THE BOXPLOT
+# ------------------------------------------------------------------------------
+p_school_box <- ggplot(df_schooling, aes(x = status, y = schooling, fill = status)) +
+  
+  # Draw the boxplot. We make it slightly narrower (width) for elegance, 
+  # and style the outlier dots so they look deliberate rather than messy.
+  geom_boxplot(width = 0.4, alpha = 0.85, color = "black",
+               outlier.shape = 21, outlier.size = 2, outlier.alpha = 0.5) +
+  
+  # Keep the high-contrast color palette consistent with your other charts
+  scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  # Add professional labels
+  labs(
+    title = "Figure 5. Distribution of Schooling by Development Status",
+    subtitle = "Comparing total years of schooling across all available data (2000-2015)",
+    x = "Development Status",
+    y = "Schooling (Years)"
+  ) +
+  
+  # Apply a clean presentation theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",              # The X-axis handles the labels, no legend needed
+    panel.grid.major.x = element_blank(),  # Remove vertical lines behind the boxes
+    plot.title = element_text(face = "bold")
+  )
+
+# 3. Render the plot
+p_school_box
+```
+
+## But..
+```{r}
+#I dont like this one, prob skip, too crowded
+#| label: fig-schooling-panel
+#| fig-cap: "Year-by-year distribution of Schooling by Country Development Status"
+#| warning: false
+#| message: false
+
+# 1. PREP DATA
+# ------------------------------------------------------------------------------
+df_schooling <- df_raw %>%
+  filter(!is.na(status) & status != "", !is.na(schooling)) %>%
+  mutate(status = str_trim(as.character(status)))
+
+# ------------------------------------------------------------------------------
+# 2. GENERATE THE FACETED PLOT
+# ------------------------------------------------------------------------------
+p_school_panel <- ggplot(df_schooling, aes(x = status, y = schooling, fill = status)) +
+  
+  # Draw the boxplot. Outlier sizes are reduced to prevent clutter in small panels
+  geom_boxplot(width = 0.6, alpha = 0.85, color = "black",
+               outlier.shape = 21, outlier.size = 1, outlier.alpha = 0.5) +
+  
+  # THE MAGIC LINE: This splits the plot into 16 panels, one for each year
+  facet_wrap(~ year, nrow = 4) +
+  
+  scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  labs(
+    title = "Figure 6. Evolution of Schooling by Development Status",
+    subtitle = "Year-by-year tracking of educational attainment (2000-2015)",
+    x = NULL, # X-axis title removed to save precious vertical space on the slide
+    y = "Schooling (Years)"
+  ) +
+  
+  # Apply theme optimized for faceted presentation slides
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    
+    # Angle the X-axis text slightly so "Developed" and "Developing" don't crash into each other
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8), 
+    
+    # Style the panel headers (the years) to make them pop
+    strip.background = element_rect(fill = "gray90", color = "white"),
+    strip.text = element_text(face = "bold", size = 10),
+    
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold", size = 14)
+  )
+
+# 3. Render the plot
+p_school_panel
+```
+
 
 ## BMI
 
-![](images/clipboard-2099393484.png)
+```{r}
+#| label: fig-bmi-extremes
+#| fig-cap: "Countries with the highest and lowest mean BMI (2015)"
+#| warning: false
+#| message: false
+
+
+# 1. PREP DATA: Isolate 2015 and extract the Top/Bottom 10
+# ------------------------------------------------------------------------------
+df_bmi_2015 <- df_raw %>%
+  # Filter for the most recent year to get an accurate modern snapshot
+  filter(year == 2015, !is.na(bmi)) %>%
+  select(country, bmi)
+
+# Extract the 10 highest and 10 lowest countries, tagging them for colors later
+top_10 <- df_bmi_2015 %>% 
+  slice_max(bmi, n = 10) %>% 
+  mutate(Category = "Highest BMI")
+
+bottom_10 <- df_bmi_2015 %>% 
+  slice_min(bmi, n = 10) %>% 
+  mutate(Category = "Lowest BMI")
+
+# Combine them and lock the factor levels so the chart sorts cleanly from top to bottom
+df_bmi_extremes <- bind_rows(top_10, bottom_10) %>%
+  mutate(country = fct_reorder(country, bmi))
+
+
+# 2. GENERATE THE PLOT
+# ------------------------------------------------------------------------------
+p_bmi <- ggplot(df_bmi_extremes, aes(x = bmi, y = country, fill = Category)) +
+  
+  # Draw horizontal bars
+  geom_col(color = "black", alpha = 0.85, width = 0.7) +
+  
+  # Automatically stamp the exact BMI number onto the end of each bar for readability
+  geom_text(aes(label = round(bmi, 1)), 
+            hjust = -0.2, size = 4, fontface = "bold") +
+  
+  # Use your established presentation color palette
+  scale_fill_manual(values = c("Highest BMI" = "#2C3E50", "Lowest BMI" = "#E74C3C")) +
+  
+  # Expand the X-axis slightly so the text labels don't get cut off at the edge
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+  
+  labs(
+    title = "Figure 6. Global BMI Extremes",
+    subtitle = "Top 10 and Bottom 10 countries by Mean BMI (2015)",
+    x = "Mean Body Mass Index (BMI)",
+    y = NULL # Removes the redundant "country" axis label
+  ) +
+  
+  # Apply a minimalist theme
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",              # Hide redundant legend
+    panel.grid.major.y = element_blank(),  # Remove horizontal lines behind the bars
+    plot.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+
+# 3. Render the plot
+p_bmi
+```
+
+## Global Life Expectancy 2000
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| fig-align: center
+library(tidyverse)
+library(maps)
+library(viridis) 
+
+# 1. PREP THE WHO DATA (Filter years and fix country names)
+# ----------------------------------------------------------------------------
+df_map_data <- df_raw %>%
+  filter(year %in% c(2000, 2005, 2010, 2015), !is.na(life_exp)) %>%
+  select(country, year, life_exp) %>%
+  # Translate WHO formal names to match the 'maps' package dictionary
+  mutate(country = case_match(country,
+    "United States of America"                             ~ "USA",
+    "United Kingdom of Great Britain and Northern Ireland" ~ "UK",
+    "Russian Federation"                                   ~ "Russia",
+    "Republic of Korea"                                    ~ "South Korea",
+    "Democratic People's Republic of Korea"                ~ "North Korea",
+    "Iran (Islamic Republic of)"                           ~ "Iran",
+    "Bolivia (Plurinational State of)"                     ~ "Bolivia",
+    "Venezuela (Bolivarian Republic of)"                   ~ "Venezuela",
+    "Viet Nam"                                             ~ "Vietnam",
+    "Syrian Arab Republic"                                 ~ "Syria",
+    "United Republic of Tanzania"                          ~ "Tanzania",
+    "Côte d'Ivoire"                                        ~ "Ivory Coast",
+    "Lao People's Democratic Republic"                     ~ "Laos",
+    "Congo"                                                ~ "Republic of Congo",
+    .default = as.character(country)
+  ))
+
+# 2. PREP THE MAP BASE (Expand for all 4 years)
+# ------------------------------------------------------------------------------
+# Extract the base world map
+world_base <- map_data("world") %>%
+  filter(region != "Antarctica") # Drop Antarctica to save space
+
+# To facet polygons properly without dropping countries that lack data in a specific 
+# year, we cross the base map with our target years.
+world_expanded <- expand_grid(
+  world_base,
+  year = c(2000, 2005, 2010, 2015)
+)
+
+# Join our cleaned WHO data to the expanded map coordinates
+map_final <- world_expanded %>%
+  left_join(df_map_data, by = c("region" = "country", "year" = "year"))
+
+# map 1
+map_2000 <- map_final %>% filter(year == 2000)
+
+ggplot(map_2000, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  geom_polygon(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", direction = -1, na.value = "gray85", 
+                       name = "Life Expectancy", limits = c(40, 85)) +
+  theme_void(base_size = 14) + 
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+```
+
+## Global Life Expectancy 2005
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| fig-align: center
+
+map_2005 <- map_final %>% filter(year == 2005)
+
+ggplot(map_2005, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  geom_polygon(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", direction = -1, na.value = "gray85", 
+                       name = "Life Expectancy", limits = c(40, 85)) +
+  theme_void(base_size = 14) + 
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+```
+
+## Global Life Expectancy 2010
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| fig-align: center
+
+map_2010 <- map_final %>% filter(year == 2010)
+
+ggplot(map_2010, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  geom_polygon(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", direction = -1, na.value = "gray85", 
+                       name = "Life Expectancy", limits = c(40, 85)) +
+  theme_void(base_size = 14) + 
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+```
+
+## Global Life Expectancy 2015
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| fig-align: center
+
+map_2015 <- map_final %>% filter(year == 2015)
+
+ggplot(map_2015, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  geom_polygon(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", direction = -1, na.value = "gray85", 
+                       name = "Life Expectancy", limits = c(40, 85)) +
+  theme_void(base_size = 14) + 
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+```
+
+
+
+## Combined
+```{r}
+# 3. GENERATE THE STATIC PLOT
+# ------------------------------------------------------------------------------
+p_world_map <- ggplot(map_final, aes(x = long, y = lat, group = group, fill = life_exp)) +
+  
+  # Draw the country polygons. NA values (missing data) are colored light gray.
+  geom_polygon(color = "white", linewidth = 0.1) +
+  
+  # Split the map into our 4 chosen years
+  facet_wrap(~ year, ncol = 2) +
+  
+  # Apply a high-contrast, colorblind-friendly color gradient (viridis)
+  scale_fill_viridis_c(
+    option = "magma",         # "magma" transitions beautifully from dark purple to bright yellow
+    direction = -1,           # Flips it so dark = lower life expectancy, bright = higher
+    na.value = "gray85",      # Color for countries missing from the dataset
+    name = "Life Expectancy"
+  ) +
+  
+  labs(
+    title = "Figure 7. Global Life Expectancy (2000 - 2015)",
+    subtitle = "Tracking longitudinal improvements across a 15-year span"
+  ) +
+  
+  # theme_void() strips away the latitude/longitude axes and gridlines
+  theme_void(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, margin = margin(b = 15)),
+    strip.text = element_text(face = "bold", size = 12, margin = margin(b = 5))
+  )
+
+# Render the plot
+p_world_map
+```
+
+
+## Is the data normally distributed?
+::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
+```{r}
+library(gt)
+key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort", "log_gdp") #can use log_gdp
+
+tbl2 <- purrr::map(key_vars, function(v) {
+  
+  x <- as.numeric(na.omit(df_cal[[v]])) 
+  
+  # 1. THE FIX: Safety check for minimum sample size required by shapiro.test
+  if (length(x) >= 3) {
+    sw <- shapiro.test(sample(x, min(5000, length(x))))
+    sw_w   <- round(sw$statistic, 4)
+    sw_p   <- round(sw$p.value, 4)
+    normal <- ifelse(sw$p.value > 0.05, "Yes", "No")
+  } else {
+    # If N < 3, gracefully return NAs instead of crashing
+    sw_w   <- NA
+    sw_p   <- NA
+    normal <- "N/A"
+  }
+  
+  tibble(
+    Variable  = v,
+    N         = length(x), 
+    Mean      = round(mean(x, na.rm = TRUE), 2),
+    SD        = round(sd(x, na.rm = TRUE), 2),
+    Skewness  = round(moments::skewness(x, na.rm = TRUE), 3),
+    Kurtosis  = round(moments::kurtosis(x, na.rm = TRUE), 3),
+    SW_W      = sw_w,
+    SW_p      = sw_p,
+    Normal    = normal
+  )
+  
+}) %>% 
+  purrr::list_rbind() %>%   
+  mutate(
+    Variable = dplyr::recode_values(Variable,
+                                    "life_exp"    ~ "Life Expectancy", 
+                                    "schooling"   ~ "Schooling",
+                                    "income_comp" ~ "Income Comp. Index",      
+                                    "gdp"     ~ "GDP",
+                                    "log_gdp" ~ "log GDP",
+                                    "adult_mort"  ~ "Adult Mortality",         
+                                    default = Variable
+    )
+  )
+tbl2_gt <- tbl2 %>%
+  gt() %>%
+  tab_header(title = "Table 2. Normality Assessment of Key Continuous Variables") %>%
+  tab_spanner(label = "Descriptive", columns = c(N, Mean, SD, Skewness, Kurtosis)) %>%
+  tab_spanner(label = "Shapiro-Wilk", columns = c(SW_W, SW_p, Normal)) %>%
+  cols_label(SW_W = "W", SW_p = "p-value", Normal = "Normal?") %>%
+  fmt_number(columns = c(Mean, SD, Skewness, Kurtosis, SW_W), decimals = 3) %>%
+  fmt_number(columns = SW_p, decimals = 4) %>%
+  tab_style(
+    style = cell_text(color = "red"),
+    locations = cells_body(columns = Normal, rows = Normal == "No")
+  ) %>%
+  tab_footnote("Shapiro-Wilk W; p < 0.05 indicates departure from normality. Sample drawn (n=5000) for large datasets.")
+tbl2_gt
+```
+:::
 
 ## Combined
 
-![](images/clipboard-948302420.png)
+![Trends](images/clipboard-948302420.png)
 
-## World Map
-
-![](images/clipboard-2380783622.png)
-
-## Trends
-
-![](images/clipboard-920570809.png)
 
 ## GDP and Life Expectancy
 
-![](images/clipboard-2654712913.png)
+See correlation
+
+## Descriptive Summary
+::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
+```{r}
+df_years <- df_cal %>%
+  # Select milestone years to keep the table readable
+  filter(year %in% c(2000, 2007, 2015)) %>%
+  
+  # ERROR FIX: Strip NAs and force 'status' into a clean character string 
+  # to destroy any phantom factor levels causing the 2-level error
+  filter(!is.na(status) & status != "") %>%
+  mutate(status = str_trim(as.character(status))) %>%
+  
+  # Force predictors to numeric to prevent the Chi-Square bug
+  mutate(across(-c(country, status, year), as.numeric)) %>%
+  
+  # Select final columns
+  select(year, status, life_exp, schooling, income_comp, gdp,
+         tot_expend, adult_mort, infant_deaths, hiv_aids, bmi, alcohol)
+
+
+# 2. GENERATE THE STRATIFIED YEAR-BY-YEAR TABLE -- better------
+# ------------------------------------------------------------------------------
+tbl_yearly <- df_years %>%
+  # tbl_strata splits the table into side-by-side columns based on the 'year'
+  tbl_strata(
+    strata = year,
+    .tbl_fun = ~ .x %>%
+      tbl_summary(
+        by = status,
+        type = list(everything() ~ "continuous"), 
+        statistic = list(all_continuous() ~ "{mean} ({sd})"),
+        digits  = all_continuous() ~ 2,
+        label   = list(
+          life_exp      ~ "Life Expectancy (years)",
+          schooling     ~ "Schooling (years)",
+          income_comp   ~ "Income Composition Index",
+          gdp           ~ "GDP per capita",
+          tot_expend    ~ "Health Expenditure (% GDP)",
+          adult_mort    ~ "Adult Mortality (per 1,000)",
+          infant_deaths ~ "Infant Deaths (per 1,000)",
+          hiv_aids      ~ "HIV/AIDS Deaths (per 1,000)",
+          bmi           ~ "Mean BMI",
+          alcohol       ~ "Alcohol Consumption (L/capita)"
+        ),
+        missing = "no"
+      ) %>%
+      add_p(
+        test = list(all_continuous() ~ "wilcox.test"),
+        pvalue_fun = ~ style_pvalue(.x, digits = 3)
+      ) %>%
+      modify_header(label ~ "**Variable**")
+  ) %>%
+  # Add a clean caption to the overall stratified table
+  modify_caption("**Table 2.** Longitudinal characteristics by country development status (2000 vs 2007 vs 2015)")
+
+# Print the table
+tbl_yearly
+```
+:::
 
 ## Logistic Regression
 
@@ -136,7 +824,7 @@ What is the probability that a country achieves a high life expectancy (greater 
 $$\log\left(\frac{P(Y=1)}{1-P(Y=1)}\right)=\beta_0+ \beta_1 \mathrm{Polio}+ \beta_2 \mathrm{Diphtheria}+ \beta_3 \log(\mathrm{GDP})+ \cdots$$
 
 |  |  |  |
-|---------------------|-----------------------|-----------------------------|
+|---------------------|-----------------------|----------------------------|
 | **Component** | **Variable in Dataset** | **Role** |
 | **Outcome (**$Y$) | high_life_exp | 1 if life_exp $\ge$ 70, 0 if otherwise |
 | **Predictor (**$X_1$) | polio | Immunization coverage (%) |
@@ -145,22 +833,129 @@ $$\log\left(\frac{P(Y=1)}{1-P(Y=1)}\right)=\beta_0+ \beta_1 \mathrm{Polio}+ \bet
 | **Predictor (**$X_4$) | schooling | Social determinant (Years) |
 | **Confounder (**$X_5$) | status | Categorical adjustment (Developed/Developing) |
 
+::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
 ```{r}
 
-# 1. Create the binary outcome variable
-df_logit <- df_raw %>%
-  # Drop rows with missing values in our variables of interest to avoid errors
-  drop_na(life_exp, polio, diphtheria, gdp, schooling, status) %>%
-  mutate(high_life_exp = ifelse(life_exp >= 70, 1, 0))
+# Install the panel data package if you don't have it
+# install.packages("plm")
 
-# 2. Fit the multiple logistic regression model
-# Note: We log-transform GDP directly in the formula to handle right-skewness
-logit_model <- glm(
-  high_life_exp ~ polio + diphtheria + log(gdp) + schooling + status,
-  data = df_logit,
-  family = binomial(link = "logit")
+library(plm)
+library(broom)
+
+# 1. Declare your dataset as Panel Data
+# This tells R that the data is clustered by 'country' and progresses by 'year'
+pdata <- pdata.frame(df_cal, index = c("country", "year"))
+
+# 2. Run a Two-Way Fixed Effects Regression
+# 'effect = "twoways"' controls for BOTH unobserved country traits AND global year shocks
+panel_model <- plm(
+  life_exp ~ log(gdp) + schooling + adult_mort + infant_deaths + polio, 
+  data = pdata, 
+  model = "within",   # "within" is the econometric term for Fixed Effects
+  effect = "twoways"  
 )
 
-# 3. View the summary statistics (Log-Odds)
-summary(logit_model)
+# 3. View the Results
+panel_model
+
+# 4. Clean output for presentation
+tidy(panel_model, conf.int = TRUE)
 ```
+:::
+
+## How do these compare
+::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
+```{r}
+# Install packages if you don't have them
+# install.packages(c("plm", "modelsummary", "ggplot2"))
+
+library(tidyverse)
+library(plm)
+library(modelsummary)
+library(ggplot2)
+
+# ------------------------------------------------------------------------------
+# 1. PREPARE THE DATA
+# ------------------------------------------------------------------------------
+# Ensure the data is declared as a panel dataset for the fixed effects model
+pdata <- pdata.frame(df_cal, index = c("country", "year"))
+
+# ------------------------------------------------------------------------------
+# 2. RUN THE MODELS
+# ------------------------------------------------------------------------------
+# Model 1: Naive Standard Regression (Ignores country and year grouping)
+model_naive <- lm(
+  life_exp ~ log(gdp) + schooling + adult_mort + infant_deaths + polio, 
+  data = df_cal
+)
+
+# Model 2: Two-Way Fixed Effects (Controls for specific countries and global years)
+model_twfe <- plm(
+  life_exp ~ log(gdp) + schooling + adult_mort + infant_deaths + polio, 
+  data = pdata, 
+  model = "within", 
+  effect = "twoways"
+)
+
+# Bundle models into a named list for comparison
+models_to_compare <- list(
+  "Naive OLS (Standard)" = model_naive,
+  "Two-Way Fixed Effects" = model_twfe
+)
+
+# ------------------------------------------------------------------------------
+# 3. TABULAR COMPARISON (Side-by-Side Table)
+# ------------------------------------------------------------------------------
+# This generates a beautifully formatted table showing coefficients and standard errors
+comparison_table <- modelsummary(
+  models_to_compare,
+  output = "gt",
+  stars = TRUE, # Adds significance stars (* p < 0.05, ** p < 0.01, etc.)
+  title = "Table 4. Model Comparison: Standard OLS vs Fixed Effects",
+  coef_rename = c("log(gdp)" = "log(GDP)",
+                  "schooling" = "Schooling (Years)",
+                  "adult_mort" = "Adult Mortality",
+                  "infant_deaths" = "Infant Deaths",
+                  "polio" = "Polio Immunization (%)")
+)
+
+comparison_table
+
+```
+:::
+
+# Comparison...
+```{r}
+# 4. VISUAL COMPARISON (Coefficient Plot)
+# ------------------------------------------------------------------------------
+# This plots the coefficients and their 95% confidence intervals side-by-side
+# We omit the Intercept because Fixed Effects models absorb it, making it uncomparable.
+visual_plot <- modelplot(
+  models_to_compare, 
+  coef_omit = "Intercept",
+  coef_rename = c("log(gdp)" = "log(GDP)",
+                  "schooling" = "Schooling",
+                  "adult_mort" = "Adult Mortality",
+                  "infant_deaths" = "Infant Deaths",
+                  "polio" = "Polio Immunization")
+) +
+  # Add ggplot2 styling for a clean, professional look
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", linewidth = 1) +
+  theme_minimal() +
+  scale_color_manual(values = c("Naive OLS (Standard)" = "#E74C3C", 
+                                "Two-Way Fixed Effects" = "#2C3E50")) +
+  labs(
+    title = "Coefficient Comparison: Standard vs. Fixed Effects Model",
+    subtitle = "Points represent the estimated effect on Life Expectancy. Bars are 95% CIs.",
+    x = "Estimated Coefficient (Effect on Life Expectancy)",
+    y = "Predictor Variable",
+    color = "Model Type"
+  ) +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(face = "bold", size = 11)
+  )
+
+visual_plot
+```
+
