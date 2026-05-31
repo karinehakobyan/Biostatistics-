@@ -200,7 +200,7 @@ p_status <- ggplot(df_status_counts, aes(x = status, fill = status)) +
   
   # Assign professional, high-contrast colors to the two categories
   scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
-  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
   # Add clear, descriptive labels
   labs(
     title = "Figure 1. Global Distribution of Country Development Status",
@@ -746,7 +746,76 @@ tbl2_gt
 
 ## Combined
 
-![Trends](images/clipboard-948302420.png)
+```{r}
+#| label: fig-density-panel
+#| fig-cap: "Density distribution of continuous variables by country status"
+#| warning: false
+#| message: false
+
+# 1. PREP THE DATA (The Wide-to-Long Transformation)
+# ------------------------------------------------------------------------------
+df_long <- df_cal %>%
+  # Keep only valid status labels
+  filter(!is.na(status) & status != "") %>%
+  mutate(status = str_trim(as.character(status))) %>%
+  
+  # Select ONLY the grouping column (status) and the continuous variables you want to plot
+  select(status, adult_mort, bmi, gdp, infant_deaths, life_exp, tot_expend, schooling) %>%
+  
+  # Melt all numeric columns into two columns ("variable" and "value")
+  pivot_longer(
+    cols = -status,        # Pivot everything EXCEPT the status column
+    names_to = "variable", # Put the column names here
+    values_to = "value"    # Put the actual numbers here
+  ) %>%
+  
+  # Drop missing values to prevent plotting errors
+  filter(!is.na(value)) %>%
+  
+  # Clean up the variable names so the panel headers look professional
+  mutate(variable = case_match(variable,
+    "adult_mort"    ~ "Adult Mortality",
+    "bmi"           ~ "BMI",
+    "gdp"           ~ "GDP",
+    "infant_deaths" ~ "Infant Deaths",
+    "life_exp"      ~ "Life Expectancy",
+    "tot_expend"    ~ "Total Expenditure",
+    "schooling"     ~ "Schooling",
+    .default = variable
+  ))
+
+
+# 2. GENERATE THE DENSITY PLOTS
+# ------------------------------------------------------------------------------
+p_density <- ggplot(df_long, aes(x = value, fill = status)) +
+  
+  # Draw the smooth, overlapping curves
+  geom_density(alpha = 0.5, color = "black", linewidth = 0.3) +
+  
+  # Facet by the new 'variable' column we created in step 1
+  facet_wrap(~ variable, scales = "free") +
+  
+  scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  labs(
+    title = "Figure 8. Distribution Overlap by Development Status",
+    subtitle = "Smoothed density curves (Area under each curve = 100%)",
+    x = NULL, 
+    y = "Density"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12), 
+    panel.grid.minor = element_blank()
+  )
+
+# 3. Render the plot
+p_density
+```
 
 
 ## GDP and Life Expectancy
