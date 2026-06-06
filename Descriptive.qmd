@@ -12,6 +12,8 @@ Corresponding economic data compiled from **United Nations (UN)** databases
 
 Individual data files merged into a unified dataset covering **193 countries**
 
+Data downloaded from **Kaggle**
+
 ## Temporal Scope
 
 Spans a 16-year period from **2000 to 2015**
@@ -105,6 +107,7 @@ summary(df_med)
 ```
 
 ## Impact of actions
+
 ::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
 ```{r}
 library(tidyverse)
@@ -113,17 +116,14 @@ library(gtsummary)
 # ------------------------------------------------------------------------------
 # 1. COMBINE THE DATASETS
 # ------------------------------------------------------------------------------
-# We tag each dataset with a new column identifying how it was processed,
-# then bind them all together into one massive dataframe.
 df_combined <- bind_rows(
   df_raw %>% mutate(Handling_Method = "1. Raw Data (NAs Present)"),
   df_dropped %>% mutate(Handling_Method = "2. Dropped (Only for the key var)"),
   df_med %>% mutate(Handling_Method = "3. Imputed (Country Medians)")
 ) %>%
-  # Select key variables to keep the table clean and readable
   select(Handling_Method, life_exp, schooling, income_comp, gdp, 
          tot_expend, adult_mort, infant_deaths, bmi) %>%
-  # Ensure all predictors are numeric to prevent calculation errors
+  # Just force them to numeric; no need to rename them here!
   mutate(across(-Handling_Method, as.numeric))
 
 # ------------------------------------------------------------------------------
@@ -135,20 +135,25 @@ tbl_comparison <- df_combined %>%
     type = list(everything() ~ "continuous"),
     statistic = list(all_continuous() ~ "{mean} ({sd})"),
     digits = all_continuous() ~ 2,
-    # 'ifany' explicitly displays a row showing exactly how many NAs are in the 
-    # Raw column, while confirming there are 0 in the Dropped and Imputed columns
     missing = "ifany", 
-    missing_text = "Missing Values"
-  ) %>%
-  add_p(
-    # Tests for a statistically significant difference across the 3 datasets
-    test = list(all_continuous() ~ "kruskal.test"),
-    pvalue_fun = ~ style_pvalue(.x, digits = 3)
+    missing_text = "Missing Values",
+    
+    # THE FIX: Map your clean presentation labels right here
+    label = list(
+      life_exp      ~ "Life Expectancy",
+      gdp           ~ "GDP per Capita",
+      schooling     ~ "Schooling",
+      income_comp   ~ "Income Composition",
+      bmi           ~ "Mean BMI",
+      infant_deaths ~ "Infant Deaths",
+      adult_mort    ~ "Adult Mortality",
+      tot_expend    ~ "Health Expenditure"
+    )
   ) %>%
   add_overall() %>%
   bold_labels() %>%
   modify_header(label ~ "**Variable**") %>%
-  modify_caption("**Table 3. Impact of Missing Data Handling on Variable Distributions**")
+  modify_caption("**Table 1. Impact of Missing Data Handling on Variable Distributions**")
 
 # Print the final table
 tbl_comparison
@@ -156,6 +161,7 @@ tbl_comparison
 :::
 
 ## Countries
+
 ```{r}
 # 1. PREP DATA: Isolate unique countries to prevent 16x overcounting
 # ------------------------------------------------------------------------------
@@ -221,7 +227,6 @@ p_status <- ggplot(df_status_counts, aes(x = status, fill = status)) +
 p_status
 ```
 
-
 ## Distributions
 
 ```{r}
@@ -262,7 +267,6 @@ p_hist <- df_cal %>% #used median filled and not the raw
 p_hist
 ```
 
-
 ## Life expectancy
 
 ```{r}
@@ -294,6 +298,7 @@ p_violin_status
 ```
 
 ## Average Expenditure
+
 ```{r}
 #| label: fig-expenditure-trend
 #| fig-cap: "Longitudinal trends in health expenditure as a percentage of GDP."
@@ -351,8 +356,8 @@ p_expend <- ggplot(df_expend_trend, aes(x = year, y = avg_expend,
 p_expend
 ```
 
-
 ## Schooling
+
 ```{r}
 #| label: fig-schooling-boxplot
 #| fig-cap: "Distribution of Schooling Years by Country Development Status"
@@ -402,6 +407,7 @@ p_school_box
 ```
 
 ## But..
+
 ```{r}
 #I dont like this one, prob skip, too crowded
 #| label: fig-schooling-panel
@@ -456,7 +462,6 @@ p_school_panel <- ggplot(df_schooling, aes(x = status, y = schooling, fill = sta
 p_school_panel
 ```
 
-
 ## BMI
 
 ```{r}
@@ -468,7 +473,7 @@ p_school_panel
 
 # 1. PREP DATA: Isolate 2015 and extract the Top/Bottom 10
 # ------------------------------------------------------------------------------
-df_bmi_2015 <- df_raw %>%
+df_bmi_2015 <- df_med %>%
   # Filter for the most recent year to get an accurate modern snapshot
   filter(year == 2015, !is.na(bmi)) %>%
   select(country, bmi)
@@ -525,6 +530,7 @@ p_bmi
 ```
 
 ## Global Life Expectancy 2000
+
 ```{r}
 #| echo: false
 #| warning: false
@@ -587,6 +593,7 @@ ggplot(map_2000, aes(x = long, y = lat, group = group, fill = life_exp)) +
 ```
 
 ## Global Life Expectancy 2005
+
 ```{r}
 #| echo: false
 #| warning: false
@@ -604,6 +611,7 @@ ggplot(map_2005, aes(x = long, y = lat, group = group, fill = life_exp)) +
 ```
 
 ## Global Life Expectancy 2010
+
 ```{r}
 #| echo: false
 #| warning: false
@@ -621,6 +629,7 @@ ggplot(map_2010, aes(x = long, y = lat, group = group, fill = life_exp)) +
 ```
 
 ## Global Life Expectancy 2015
+
 ```{r}
 #| echo: false
 #| warning: false
@@ -637,9 +646,8 @@ ggplot(map_2015, aes(x = long, y = lat, group = group, fill = life_exp)) +
   theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
 ```
 
-
-
 ## Combined
+
 ```{r}
 # 3. GENERATE THE STATIC PLOT
 # ------------------------------------------------------------------------------
@@ -678,12 +686,12 @@ p_world_map <- ggplot(map_final, aes(x = long, y = lat, group = group, fill = li
 p_world_map
 ```
 
-
 ## Is the data normally distributed?
+
 ::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
 ```{r}
 library(gt)
-key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort", "log_gdp") #can use log_gdp
+key_vars <- c("life_exp", "schooling", "income_comp", "gdp", "adult_mort", "bmi") #can use log_gdp
 
 tbl2 <- purrr::map(key_vars, function(v) {
   
@@ -722,6 +730,7 @@ tbl2 <- purrr::map(key_vars, function(v) {
                                     "schooling"   ~ "Schooling",
                                     "income_comp" ~ "Income Comp. Index",      
                                     "gdp"     ~ "GDP",
+                                    "bmi" ~ "BMI",
                                     "log_gdp" ~ "log GDP",
                                     "adult_mort"  ~ "Adult Mortality",         
                                     default = Variable
@@ -748,7 +757,7 @@ tbl2_gt
 
 ```{r}
 #| label: fig-density-panel
-#| fig-cap: "Density distribution of continuous variables by country status"
+#| fig-cap: "Density distribution of continuous variables by country status" #remove
 #| warning: false
 #| message: false
 
@@ -817,12 +826,12 @@ p_density <- ggplot(df_long, aes(x = value, fill = status)) +
 p_density
 ```
 
-
 ## GDP and Life Expectancy
 
 See correlation
 
 ## Descriptive Summary
+
 ::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
 ```{r}
 df_years <- df_cal %>%
@@ -933,6 +942,7 @@ tidy(panel_model, conf.int = TRUE)
 :::
 
 ## How do these compare
+
 ::: {style="overflow-x: auto; overflow-y: auto; max-height: 600px;"}
 ```{r}
 # Install packages if you don't have them
@@ -994,6 +1004,7 @@ comparison_table
 :::
 
 # Comparison...
+
 ```{r}
 # 4. VISUAL COMPARISON (Coefficient Plot)
 # ------------------------------------------------------------------------------
@@ -1028,3 +1039,94 @@ visual_plot <- modelplot(
 visual_plot
 ```
 
+## Combined t tests
+
+```{r}
+#| label: fig-and-tbl-hypothesis-tests
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(gt) # For the presentation-ready stats table
+
+# ------------------------------------------------------------------------------
+# 1. THE VISUALIZATION: Box Plot with Overlaid Data Points
+# ------------------------------------------------------------------------------
+df_country_avg <- df_med %>%
+  # Remove rows with missing status or life expectancy
+  filter(!is.na(status) & status != "", !is.na(life_exp)) %>%
+  mutate(status = str_trim(as.character(status))) %>%
+  
+  # Group by country and status, then calculate the mean for each
+  group_by(country, status) %>%
+  summarise(
+    mean_life_exp = mean(life_exp, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p_test_box <- ggplot(df_country_avg, aes(x = status, y = mean_life_exp, fill = status)) +
+  
+  # Draw the boxplots. We hide the default outliers because the jitter layer handles them.
+  geom_boxplot(alpha = 0.7, width = 0.5, outlier.shape = NA) +
+  
+  # THE UPGRADE: Plot the actual 193 countries as dots over the boxes
+  #geom_jitter(width = 0.15, alpha = 0.6, size = 2, color = "gray20") +
+  
+  scale_fill_manual(values = c("Developed" = "#2C3E50", "Developing" = "#E74C3C")) +
+  
+  labs(
+    title = "Baseline Life Expectancy by Development Status",
+    subtitle = "Each point represents a country's 16-year historical average (N = 193)",
+    x = NULL, # X-axis label removed since the categories are self-explanatory
+    y = "Mean Life Expectancy (Years)"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+# Render the plot
+print(p_test_box)
+
+# ------------------------------------------------------------------------------
+# 2. THE STATISTICAL RESULTS TABLE
+# ------------------------------------------------------------------------------
+# Run the tests silently to extract their mathematical values
+t_res <- t.test(mean_life_exp ~ status, data = df_country_avg)
+w_res <- wilcox.test(mean_life_exp ~ status, data = df_country_avg)
+
+# Build a clean dataframe of the results
+df_stats <- tibble(
+  `Statistical Test` = c("Welch Two Sample t-test", "Wilcoxon Rank-Sum Test"),
+  `Statistic` = c(paste0("t = ", round(t_res$statistic, 2)), 
+                  paste0("W = ", w_res$statistic)),
+  `Degrees of Freedom` = c(round(t_res$parameter, 1), "—"),
+  `P-Value` = c("< 0.001", "< 0.001")
+)
+
+# Format the dataframe into a stunning presentation table using gt
+tbl_stats <- df_stats %>%
+  gt() %>%
+  tab_header(
+    title = md("**Hypothesis Testing Results**"),
+    subtitle = "Comparison of historical global life expectancy baselines"
+  ) %>%
+  # Center align the math, left align the text
+  cols_align(align = "center", columns = c(`Statistic`, `Degrees of Freedom`, `P-Value`)) %>%
+  cols_align(align = "left", columns = `Statistical Test`) %>%
+  # Add some styling to make it pop on a slide
+  tab_options(
+    table.width = pct(90),
+    heading.title.font.weight = "bold",
+    column_labels.font.weight = "bold",
+    table.border.top.color = "black",
+    table.border.bottom.color = "black"
+  )
+
+# Render the table
+tbl_stats
+```
