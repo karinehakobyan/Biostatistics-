@@ -1369,7 +1369,622 @@ for (spec in scatter_spec) {
 
 
 
-# 7. MULTIPLE LINEAR REGRESSION ---------
+# 7. MULTIPLE LINEAR REGRESSION --------- Karine
+# 7A. SIMPLE LINEAR REGRESSION ---------
+# Research question:
+# Which metric variables are individually associated with life expectancy?
+#
+# Logic:
+# Each model uses ONE metric predictor at a time:
+# life_exp ~ predictor
+#
+# This is simple linear regression, not multiple regression.
+# It helps us identify which variables have the strongest individual relationship
+# with life expectancy before building adjusted multiple regression models.
+
+
+## ── 7A.0 Create output folders ------------------------------------------------
+
+if (!dir.exists("figures")) dir.create("figures")
+if (!dir.exists("tables")) dir.create("tables")
+
+
+## ── 7A.1 Choose dataset -------------------------------------------------------
+
+# Use df_cal if it exists, because your script already converted key variables
+# to numeric in that dataset. Otherwise, fall back to df.
+reg_data <- if (exists("df_cal")) df_cal else df
+
+# Make sure important variables are numeric
+reg_data <- reg_data %>%
+  mutate(across(where(is.numeric), as.numeric))
+
+
+## ── 7A.2 Define metric predictors --------------------------------------------
+
+# These are the main metric variables that make sense as simple predictors.
+# We exclude life_exp because it is the outcome.
+# We exclude year because it is a time variable, not a socioeconomic predictor.
+# We use log_gdp instead of raw gdp because GDP is highly skewed.
+simple_predictors <- c(
+  "schooling",
+  "income_comp",
+  "log_gdp",
+  "tot_expend",
+  "adult_mort",
+  "infant_deaths",
+  "hiv_aids",
+  "bmi",
+  "alcohol",
+  "hepatitis_b",
+  "polio",
+  "diphtheria",
+  "thinness_1_19",
+  "thinness_5_9"
+)
+
+# Keep only predictors that actually exist in your dataset
+simple_predictors <- simple_predictors[simple_predictors %in% names(reg_data)]
+
+cat("\nMetric predictors used for simple regression:\n")
+print(simple_predictors)
+
+
+## ── 7A.3 Function to run one simple regression --------------------------------
+
+run_simple_lm <- function(var_name) {
+  
+  temp_df <- reg_data %>%
+    select(life_exp, all_of(var_name)) %>%
+    rename(x = all_of(var_name)) %>%
+    drop_na()
+  
+  # Safety check: simple regression needs enough valid observations
+  if (nrow(temp_df) < 3 || length(unique(temp_df$x)) < 2) {
+    return(tibble(
+      predictor = var_name,
+      n = nrow(temp_df),
+      intercept = NA_real_,
+      slope = NA_real_,
+      conf_low = NA_real_,
+      conf_high = NA_real_,
+      p_value = NA_real_,
+      r_squared = NA_real_,
+      adj_r_squared = NA_real_,
+      rmse = NA_real_,
+      pearson_r = NA_real_,
+      pearson_p = NA_real_
+    ))
+  }
+  
+  model <- lm(life_exp ~ x, data = temp_df)
+  
+  coef_tbl <- broom::tidy(model, conf.int = TRUE)
+  fit_tbl  <- broom::glance(model)
+  cor_res  <- cor.test(temp_df$x, temp_df$life_exp, method = "pearson")
+  
+  tibble(
+    predictor = var_name,
+    n = nrow(temp_df),
+    intercept = coef_tbl$estimate[coef_tbl$term == "(Intercept)"],
+    slope = coef_tbl$estimate[coef_tbl$term == "x"],
+    conf_low = coef_tbl$conf.low[coef_tbl$term == "x"],
+    conf_high = coef_tbl$conf.high[coef_tbl$term == "x"],
+    p_value = coef_tbl$p.value[coef_tbl$term == "x"],
+    r_squared = fit_tbl$r.squared,
+    adj_r_squared = fit_tbl$adj.r.squared,
+    rmse = sqrt(mean(model$residuals^2)),
+    pearson_r = as.numeric(cor_res$estimate),
+    pearson_p = cor_res$p.value
+  )
+}
+
+
+## ── 7A.4 Run simple regression for all metric predictors ----------------------
+
+simple_lm_results <- purrr::map_dfr(simple_predictors, run_simple_lm) %>%
+  mutate(
+    predictor_label = dplyr::recode(
+      predictor,
+      schooling     = "Schooling",
+      income_comp   = "Income Composition Index",
+      log_gdp       = "log(GDP per capita)",
+      tot_expend    = "Health Expenditure (% GDP)",
+      adult_mort    = "Adult Mortality",
+      infant_deaths = "Infant Deaths",
+      hiv_aids      = "HIV/AIDS",
+      bmi           = "BMI",
+      alcohol       = "Alcohol Consumption",
+      hepatitis_b   = "Hepatitis B",
+      polio         = "Polio",
+      diphtheria    = "Diphtheria",
+      thinness_1_19 = "Thinness 10-19 years",
+      thinness_5_9  = "Thinness 5-9 years",
+      .default      = predictor
+    ),
+    direction = case_when(
+      slope > 0 ~ "Positive",
+      slope < 0 ~ "Negative",
+      TRUE      ~ "No clear direction"
+    ),
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ ""
+    )
+  ) %>%
+  arrange(desc(r_squared))
+
+cat("\nSimple linear regression results ranked by R²:\n")
+print(simple_lm_results)
+
+write.csv(
+  simple_lm_results,
+  "tables/simple_linear_regression_all_metric_predictors.csv",
+  row.names = FALSE
+)
+
+
+## ── 7A.5 Beautiful results table ---------------------------------------------
+
+simple_lm_gt <- simple_lm_results %>%
+  select(
+    predictor_label,
+    n,
+    slope,
+    conf_low,
+    conf_high,
+    p_value,
+    sig,
+    r_squared,
+    pearson_r,
+    rmse
+  ) %>%
+  mutate(
+    slope = round(slope, 3),
+    conf_low = round(conf_low, 3),
+    conf_high = round(conf_high, 3),
+    p_value = ifelse(p_value < 0.001, "<0.001", as.character(round(p_value, 4))),
+    r_squared = round(r_squared, 3),
+    pearson_r = round(pearson_r, 3),
+    rmse = round(rmse, 2)
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Table 7A. Simple Linear Regression Results",
+    subtitle = "Each metric predictor was tested separately against life expectancy"
+  ) %>%
+  cols_label(
+    predictor_label = "Predictor",
+    n = "N",
+    slope = "Slope",
+    conf_low = "95% CI low",
+    conf_high = "95% CI high",
+    p_value = "p-value",
+    sig = "",
+    r_squared = "R²",
+    pearson_r = "Pearson r",
+    rmse = "RMSE"
+  ) %>%
+  tab_footnote(
+    footnote = "Slope = expected change in life expectancy for a one-unit increase in the predictor."
+  ) %>%
+  tab_footnote(
+    footnote = "R² = proportion of variation in life expectancy explained by the predictor alone."
+  ) %>%
+  tab_footnote(
+    footnote = "*** p<0.001, ** p<0.01, * p<0.05."
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    heading.align = "left",
+    column_labels.font.weight = "bold"
+  )
+
+print(simple_lm_gt)
+
+gtsave(
+  simple_lm_gt,
+  "tables/table_7A_simple_linear_regression_results.html"
+)
+
+
+## ── 7A.6 Top predictors table -------------------------------------------------
+
+top_simple_predictors <- simple_lm_results %>%
+  slice_max(order_by = r_squared, n = 6)
+
+top_simple_gt <- top_simple_predictors %>%
+  select(
+    predictor_label,
+    slope,
+    p_value,
+    r_squared,
+    pearson_r,
+    rmse
+  ) %>%
+  mutate(
+    slope = round(slope, 3),
+    p_value = ifelse(p_value < 0.001, "<0.001", as.character(round(p_value, 4))),
+    r_squared = round(r_squared, 3),
+    pearson_r = round(pearson_r, 3),
+    rmse = round(rmse, 2)
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Table 7B. Top Simple Predictors of Life Expectancy",
+    subtitle = "Ranked by explained variance, R²"
+  ) %>%
+  cols_label(
+    predictor_label = "Predictor",
+    slope = "Slope",
+    p_value = "p-value",
+    r_squared = "R²",
+    pearson_r = "Pearson r",
+    rmse = "RMSE"
+  ) %>%
+  tab_options(
+    table.width = pct(90),
+    heading.align = "left",
+    column_labels.font.weight = "bold"
+  )
+
+print(top_simple_gt)
+
+gtsave(
+  top_simple_gt,
+  "tables/table_7B_top_simple_predictors.html"
+)
+
+
+## ── 7A.7 Figure: R² ranking ---------------------------------------------------
+
+p_simple_r2 <- simple_lm_results %>%
+  mutate(
+    predictor_label = forcats::fct_reorder(predictor_label, r_squared)
+  ) %>%
+  ggplot(aes(x = predictor_label, y = r_squared, fill = direction)) +
+  geom_col(width = 0.75, colour = "white") +
+  geom_text(
+    aes(label = round(r_squared, 2)),
+    hjust = -0.12,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "Positive" = "#2166AC",
+      "Negative" = "#D6604D",
+      "No clear direction" = "grey60"
+    )
+  ) +
+  scale_y_continuous(
+    limits = c(0, max(simple_lm_results$r_squared, na.rm = TRUE) + 0.08)
+  ) +
+  labs(
+    title = "Figure 15. Explained Variance in Life Expectancy",
+    subtitle = "Simple linear regression models ranked by R²",
+    x = NULL,
+    y = "R²",
+    fill = "Slope direction"
+  ) +
+  theme_pub
+
+print(p_simple_r2)
+
+ggsave(
+  "figures/figure_15_simple_regression_r2_ranking.png",
+  p_simple_r2,
+  width = 10,
+  height = 7,
+  dpi = 300
+)
+
+
+## ── 7A.8 Figure: slope forest plot -------------------------------------------
+
+p_simple_slopes <- simple_lm_results %>%
+  mutate(
+    predictor_label = forcats::fct_reorder(predictor_label, slope)
+  ) %>%
+  ggplot(aes(x = slope, y = predictor_label, colour = direction)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey45") +
+  geom_errorbarh(
+    aes(xmin = conf_low, xmax = conf_high),
+    height = 0.22,
+    linewidth = 0.8
+  ) +
+  geom_point(size = 3) +
+  scale_colour_manual(
+    values = c(
+      "Positive" = "#2166AC",
+      "Negative" = "#D6604D",
+      "No clear direction" = "grey60"
+    )
+  ) +
+  labs(
+    title = "Figure 16. Direction and Size of Simple Regression Effects",
+    subtitle = "Dots show slopes; horizontal lines show 95% confidence intervals",
+    x = "Regression slope",
+    y = NULL,
+    colour = "Direction"
+  ) +
+  theme_pub
+
+print(p_simple_slopes)
+
+ggsave(
+  "figures/figure_16_simple_regression_slope_forest_plot.png",
+  p_simple_slopes,
+  width = 10,
+  height = 7,
+  dpi = 300
+)
+
+
+## ── 7A.9 Figure: top 6 scatterplots ------------------------------------------
+
+top_simple_vars <- top_simple_predictors$predictor
+
+top_scatter_long <- reg_data %>%
+  select(life_exp, all_of(top_simple_vars)) %>%
+  pivot_longer(
+    cols = all_of(top_simple_vars),
+    names_to = "predictor",
+    values_to = "value"
+  ) %>%
+  drop_na() %>%
+  mutate(
+    predictor_label = dplyr::recode(
+      predictor,
+      schooling     = "Schooling",
+      income_comp   = "Income Composition Index",
+      log_gdp       = "log(GDP per capita)",
+      tot_expend    = "Health Expenditure (% GDP)",
+      adult_mort    = "Adult Mortality",
+      infant_deaths = "Infant Deaths",
+      hiv_aids      = "HIV/AIDS",
+      bmi           = "BMI",
+      alcohol       = "Alcohol Consumption",
+      hepatitis_b   = "Hepatitis B",
+      polio         = "Polio",
+      diphtheria    = "Diphtheria",
+      thinness_1_19 = "Thinness 10-19 years",
+      thinness_5_9  = "Thinness 5-9 years",
+      .default      = predictor
+    )
+  )
+
+p_top_simple_scatter <- ggplot(
+  top_scatter_long,
+  aes(x = value, y = life_exp)
+) +
+  geom_point(alpha = 0.25, colour = "#2166AC", size = 1.2) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    colour = "#D6604D",
+    linewidth = 1
+  ) +
+  facet_wrap(~ predictor_label, scales = "free_x", ncol = 3) +
+  labs(
+    title = "Figure 17. Top Simple Regression Relationships",
+    subtitle = "Each panel shows one metric predictor against life expectancy",
+    x = "Predictor value",
+    y = "Life expectancy (years)"
+  ) +
+  theme_pub
+
+print(p_top_simple_scatter)
+
+ggsave(
+  "figures/figure_17_top_simple_regression_scatterplots.png",
+  p_top_simple_scatter,
+  width = 13,
+  height = 8,
+  dpi = 300
+)
+
+
+## ── 7A.10 Main presentation model: schooling ---------------------------------
+# This is the most important simple regression for the education research question.
+
+schooling_simple_df <- reg_data %>%
+  select(life_exp, schooling, status) %>%
+  drop_na()
+
+schooling_simple_model <- lm(life_exp ~ schooling, data = schooling_simple_df)
+
+schooling_simple_summary <- summary(schooling_simple_model)
+schooling_simple_coef <- broom::tidy(schooling_simple_model, conf.int = TRUE)
+schooling_simple_fit <- broom::glance(schooling_simple_model)
+
+print(schooling_simple_summary)
+print(schooling_simple_coef)
+print(schooling_simple_fit)
+
+schooling_intercept <- coef(schooling_simple_model)[1]
+schooling_slope <- coef(schooling_simple_model)[2]
+schooling_r2 <- schooling_simple_fit$r.squared
+schooling_p <- schooling_simple_coef %>%
+  filter(term == "schooling") %>%
+  pull(p.value)
+
+cat("\nMain simple regression equation:\n")
+cat(
+  "Predicted life expectancy = ",
+  round(schooling_intercept, 2),
+  " + ",
+  round(schooling_slope, 2),
+  " × schooling\n",
+  sep = ""
+)
+
+cat("\nInterpretation:\n")
+cat(
+  "Each additional year of schooling is associated with approximately ",
+  round(schooling_slope, 2),
+  " additional years of life expectancy on average.\n",
+  sep = ""
+)
+
+cat(
+  "Schooling alone explains approximately ",
+  round(schooling_r2 * 100, 1),
+  "% of the variation in life expectancy.\n",
+  sep = ""
+)
+
+
+## ── 7A.11 Figure: schooling simple regression --------------------------------
+
+p_schooling_simple <- ggplot(
+  schooling_simple_df,
+  aes(x = schooling, y = life_exp)
+) +
+  geom_point(alpha = 0.35, colour = "#2166AC", size = 1.6) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    colour = "#D6604D",
+    linewidth = 1.3
+  ) +
+  annotate(
+    "label",
+    x = min(schooling_simple_df$schooling, na.rm = TRUE) + 1,
+    y = max(schooling_simple_df$life_exp, na.rm = TRUE) - 3,
+    hjust = 0,
+    label = paste0(
+      "Slope = ", round(schooling_slope, 2), "\n",
+      "R² = ", round(schooling_r2, 3), "\n",
+      "p ", ifelse(schooling_p < 0.001, "< 0.001", paste0("= ", round(schooling_p, 3)))
+    ),
+    size = 4,
+    label.size = 0.3,
+    fill = "white"
+  ) +
+  labs(
+    title = "Figure 18. Schooling as a Predictor of Life Expectancy",
+    subtitle = "Simple linear regression: life expectancy predicted by years of schooling",
+    x = "Schooling (years)",
+    y = "Life expectancy (years)"
+  ) +
+  theme_pub
+
+print(p_schooling_simple)
+
+ggsave(
+  "figures/figure_18_schooling_simple_regression.png",
+  p_schooling_simple,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
+
+## ── 7A.12 Figure: schooling by development status ----------------------------
+
+if ("status" %in% names(schooling_simple_df)) {
+  
+  p_schooling_status_simple <- ggplot(
+    schooling_simple_df,
+    aes(x = schooling, y = life_exp, colour = status)
+  ) +
+    geom_point(alpha = 0.35, size = 1.6) +
+    geom_smooth(
+      method = "lm",
+      se = TRUE,
+      linewidth = 1.1
+    ) +
+    scale_colour_manual(values = palette_status) +
+    labs(
+      title = "Figure 19. Schooling and Life Expectancy by Development Status",
+      subtitle = "Separate regression lines show the relationship in developed and developing countries",
+      x = "Schooling (years)",
+      y = "Life expectancy (years)",
+      colour = "Status"
+    ) +
+    theme_pub
+  
+  print(p_schooling_status_simple)
+  
+  ggsave(
+    "figures/figure_19_schooling_simple_regression_by_status.png",
+    p_schooling_status_simple,
+    width = 10,
+    height = 6,
+    dpi = 300
+  )
+}
+
+
+## ── 7A.13 Prediction examples -------------------------------------------------
+
+schooling_predictions <- tibble(
+  schooling = c(5, 8, 10, 12, 15)
+) %>%
+  mutate(
+    predicted_life_exp = predict(
+      schooling_simple_model,
+      newdata = tibble(schooling = schooling)
+    )
+  )
+
+print(schooling_predictions)
+
+write.csv(
+  schooling_predictions,
+  "tables/table_7C_schooling_prediction_examples.csv",
+  row.names = FALSE
+)
+
+schooling_predictions_gt <- schooling_predictions %>%
+  mutate(
+    predicted_life_exp = round(predicted_life_exp, 1)
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Table 7C. Predicted Life Expectancy by Schooling Level",
+    subtitle = "Predictions from simple linear regression"
+  ) %>%
+  cols_label(
+    schooling = "Schooling years",
+    predicted_life_exp = "Predicted life expectancy"
+  ) %>%
+  tab_options(
+    table.width = pct(60),
+    heading.align = "left",
+    column_labels.font.weight = "bold"
+  )
+
+print(schooling_predictions_gt)
+
+gtsave(
+  schooling_predictions_gt,
+  "tables/table_7C_schooling_prediction_examples.html"
+)
+
+
+## ── 7A.14 Diagnostics for main schooling model --------------------------------
+# These are not always needed in the presentation, but they are useful to show
+# that the regression assumptions were checked.
+
+png(
+  "figures/figure_20_schooling_simple_regression_diagnostics.png",
+  width = 1200,
+  height = 900
+)
+
+par(mfrow = c(2, 2))
+plot(schooling_simple_model)
+par(mfrow = c(1, 1))
+
+dev.off()
+
+cat("\nSimple regression section complete.\n")
+cat("Main outputs saved in 'figures' and 'tables' folders.\n")                                           
 
 
 # 8. Logistic regression ---------
